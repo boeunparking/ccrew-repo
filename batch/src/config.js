@@ -9,6 +9,7 @@
  */
 
 function toList(value) {
+  
   return (value ?? '')
     .split(',')
     .map((s) => s.trim())
