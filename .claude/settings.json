@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}, %{time_total}s\\\\n\" --max-time 10 http://tf-alb-1485778769.ap-northeast-2.elb.amazonaws.com)",
+      "Bash(curl -v --max-time 8 http://tf-alb-1485778769.ap-northeast-2.elb.amazonaws.com)",
+      "Bash(curl -vk --max-time 8 https://tf-alb-1485778769.ap-northeast-2.elb.amazonaws.com)",
+      "Bash(curl -sk --max-time 10 -w \"\\\\n---\\\\nHTTP_CODE:%{http_code}\\\\n\" https://tf-alb-1485778769.ap-northeast-2.elb.amazonaws.com)",
+      "Bash(aws iam *)"
+    ]
+  }
+}

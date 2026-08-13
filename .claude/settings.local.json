@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(terraform fmt *)"
+      "Bash(terraform fmt *)",
+      "Bash(aws iam *)",
+      "Bash(curl -s \"https://api.github.com/repos/boeunparking/ccrew-repo/actions/runs?per_page=5\")",
+      "Bash(python3 -c ' *)"
     ]
   }
 }
