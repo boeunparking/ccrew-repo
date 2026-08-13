@@ -72,3 +72,7 @@ node server.js          # http://localhost:3000, 호스트 검사 꺼짐
 ```
 
 프론트는 `npm run dev` 로 5173에서 띄우면 기본 `CORS_ORIGINS` 에 이미 들어있어 그대로 붙는다.
+
+## 배포
+
+GitHub Actions(`.github/workflows/deploy.yml`)가 `web/`, `batch/` 변경 시 이미지를 빌드해 ECR에 올리고, ECS 서비스를 커밋 SHA 태그로 재배포한다.
