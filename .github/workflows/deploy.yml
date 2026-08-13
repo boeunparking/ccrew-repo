@@ -1,0 +1,86 @@
+# .github/workflows/deploy.yml
+name: Build, Push & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'batch/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        run: echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-ecr-push
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push web image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
+        run: |
+          docker build -t $ECR_REGISTRY/tf-web-ecr:$IMAGE_TAG -f web/Dockerfile web/
+          docker push $ECR_REGISTRY/tf-web-ecr:$IMAGE_TAG
+
+      - name: Build & push batch image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
+        run: |
+          docker build -t $ECR_REGISTRY/tf-batch-ecr:$IMAGE_TAG -f batch/Dockerfile batch/
+          docker push $ECR_REGISTRY/tf-batch-ecr:$IMAGE_TAG
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-ecr-push
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - run: terraform init
+
+      # ECR에 새 이미지가 올라온 뒤, ECS 태스크 정의/서비스만 갱신해서 새 이미지로 재배포한다.
+      # 전체 인프라(VPC/ALB/Lambda 등) 상태까지 읽지 않도록 -target으로 ECS 리소스만 한정.
+      - name: Redeploy ECS services with new image
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          terraform apply -auto-approve \
+            -target=module.web_service.aws_ecs_task_definition.tf_task \
+            -target=module.web_service.aws_ecs_service.tf_task_service \
+            -target=module.batch_service.aws_ecs_task_definition.tf_task \
+            -target=module.batch_service.aws_ecs_service.tf_task_service \
+            -var "image_tag_web=$IMAGE_TAG" \
+            -var "image_tag_batch=$IMAGE_TAG" \
+            -var "certificate_arn=${{ secrets.CERTIFICATE_ARN }}" \
+            -var "github_org=${{ github.repository_owner }}" \
+            -var "github_repo=${{ github.event.repository.name }}"
