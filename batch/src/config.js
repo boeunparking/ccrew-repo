@@ -6,12 +6,12 @@
  *
  * 호스트가 갈라지면서 프론트와 API의 출처(origin)가 달라졌으므로
  * CORS와 WebSocket origin 검사가 필수가 됐다.
+ *
  */
 
 function toList(value) {
-  
-  return (value ?? '')
-    .split(',')
+  return (value ?? "")
+    .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -20,11 +20,11 @@ function toList(value) {
 export const API_HOSTS = (
   toList(process.env.API_HOST).length
     ? toList(process.env.API_HOST)
-    : ['api.cloudduck.cloud']
+    : ["api.cloudduck.cloud"]
 ).map((h) => h.toLowerCase());
 
 /** 로컬 개발·컨테이너 내부 진단용으로 항상 열어두는 호스트 */
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 /**
  * Host 헤더 검사 켜기/끄기.
@@ -32,8 +32,8 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
  * ENFORCE_API_HOST=false 로 잠시 끌 수 있다.
  */
 export const ENFORCE_API_HOST = process.env.ENFORCE_API_HOST
-  ? process.env.ENFORCE_API_HOST !== 'false'
-  : process.env.NODE_ENV === 'production';
+  ? process.env.ENFORCE_API_HOST !== "false"
+  : process.env.NODE_ENV === "production";
 
 export function isAllowedHost(hostname) {
   if (!hostname) return false;
@@ -48,16 +48,16 @@ export function isAllowedHost(hostname) {
 export const ALLOWED_ORIGINS = toList(process.env.CORS_ORIGINS).length
   ? toList(process.env.CORS_ORIGINS)
   : [
-      'https://cloudduck.cloud',
-      'https://www.cloudduck.cloud',
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
+      "https://cloudduck.cloud",
+      "https://www.cloudduck.cloud",
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
     ];
 
 export function isAllowedOrigin(origin) {
   if (!origin) return false;
   // '*' 를 넣으면 전부 허용 (테스트용. 프로덕션에서는 쓰지 말 것)
-  if (ALLOWED_ORIGINS.includes('*')) return true;
+  if (ALLOWED_ORIGINS.includes("*")) return true;
   return ALLOWED_ORIGINS.includes(origin);
 }
 
@@ -67,4 +67,7 @@ export function isAllowedOrigin(origin) {
  * 비워둬도 되지만(상대경로), 이미지 전용 도메인을 쓸 거라면 여기에 넣는다.
  * 예: https://cdn.cloudduck.cloud
  */
-export const ASSET_BASE_URL = (process.env.ASSET_BASE_URL ?? '').replace(/\/+$/, '');
+export const ASSET_BASE_URL = (process.env.ASSET_BASE_URL ?? "").replace(
+  /\/+$/,
+  "",
+);
