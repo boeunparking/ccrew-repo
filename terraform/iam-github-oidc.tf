@@ -119,6 +119,73 @@ resource "aws_iam_role_policy" "github_actions_ecs_deploy" {
   })
 }
 
+# CI에서 terraform apply -target 실행 시 refresh 단계가 기존 리소스를 읽어야 하므로
+# 필요한 Describe/Get 계열 읽기 전용 권한만 부여한다.
+resource "aws_iam_role_policy" "github_actions_state_refresh" {
+  name = "state-refresh-readonly"
+  role = aws_iam_role.github_actions_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:DescribeTargetGroupAttributes",
+          "elasticloadbalancing:DescribeTags",
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:DescribeRepositories",
+          "ecr:DescribeImages",
+          "ecr:ListTagsForResource",
+        ]
+        Resource = [
+          aws_ecr_repository.tf_web_ecr.arn,
+          aws_ecr_repository.tf_batch_ecr.arn,
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups",
+          "logs:ListTagsForResource",
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:GetRole",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+          "iam:GetRolePolicy",
+        ]
+        Resource = [
+          module.ecs_execution.iam_role_arn,
+          module.ecs_task.iam_role_arn,
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeVpcs",
+          "ec2:DescribeVpcAttribute",
+          "ec2:DescribeSubnets",
+          "ec2:DescribeSecurityGroups",
+          "ec2:DescribeSecurityGroupRules",
+          "ec2:DescribeRouteTables",
+          "ec2:DescribeNetworkAcls",
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # terraform state 백업 위치(S3 backend, main.tf 참고) 접근 권한
 resource "aws_iam_role_policy" "github_actions_tf_state" {
   name = "tf-state-access"

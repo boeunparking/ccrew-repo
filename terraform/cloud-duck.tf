@@ -23,12 +23,12 @@
 module "rds_seoul" {
   source = "./modules/rds"
 
-  project    = var.project
-  name       = "seoul"
-  vpc_id     = module.seoul_vpc_id
+  project = var.project
+  name    = "seoul"
+  vpc_id  = module.seoul.vpc_id
   subnet_ids = [module.seoul.subnet_ids["db-sn5"],
-                module.seoul.subnet_ids["db-sn6"]] # tf-seoul-db-sn5, tf-seoul-db-sn6
-  ecs_sg_id  = module.seoul.ecs_sg_id      # tf-seoul-ecs-sg
+  module.seoul.subnet_ids["db-sn6"]] # tf-seoul-db-sn5, tf-seoul-db-sn6
+  ecs_sg_id = module.seoul.ecs_sg_id # tf-seoul-ecs-sg
 
   # VPN 관리자 → DB 3306 허용 (VPN 관리자 접근 매트릭스)
   vpn_client_cidr = var.vpn_client_cidr
@@ -47,16 +47,17 @@ module "rds_tokyo_replica" {
     aws = aws.tokyo
   }
 
-  project    = var.project
-  name       = "tokyo"
-  vpc_id     = module.tokyo_vpc_id
+  project = var.project
+  name    = "tokyo"
+  vpc_id  = module.tokyo.vpc_id
   subnet_ids = [module.tokyo.subnet_ids["db-sn5"],
-                module.tokyo.subnet_ids["db-sn6"]] # tf-tokyo-db-sn5, tf-tokyo-db-sn6
-  ecs_sg_id  = module.tokyo_ecs_sg_id     # tf-tokyo-ecs-sg
+  module.tokyo.subnet_ids["db-sn6"]] # tf-tokyo-db-sn5, tf-tokyo-db-sn6
+  ecs_sg_id = module.tokyo.ecs_sg_id # tf-tokyo-ecs-sg
 
-  create_primary      = false
-  create_replica      = false
-  replicate_source_db = module.rds_seoul.primary_arn # 크로스 리전은 ARN 필요
+  create_primary              = false
+  create_replica              = false
+  create_cross_region_replica = true
+  replicate_source_db         = module.rds_seoul.primary_arn # 크로스 리전은 ARN 필요
 }
 
 ########################################
@@ -66,12 +67,12 @@ module "cache_seoul" {
   source = "./modules/elasticache"
 
 
-  project    = var.project
-  name       = "seoul"
-  vpc_id     = module.seoul_vpc_id
+  project = var.project
+  name    = "seoul"
+  vpc_id  = module.seoul.vpc_id
   subnet_ids = [module.seoul.subnet_ids["db-sn5"],
-                module.seoul.subnet_ids["db-sn6"]]
-  ecs_sg_id  = module.seoul_ecs_sg_id
+  module.seoul.subnet_ids["db-sn6"]]
+  ecs_sg_id = module.seoul.ecs_sg_id
 
   num_cache_clusters = 2 # 3주 스코프 → 단일 노드 권장
 }
@@ -82,12 +83,12 @@ module "cache_tokyo" {
     aws = aws.tokyo
   }
 
-  project    = var.project
-  name       = "tokyo"
-  vpc_id     = module.tokyo_vpc_id
+  project = var.project
+  name    = "tokyo"
+  vpc_id  = module.tokyo.vpc_id
   subnet_ids = [module.tokyo.subnet_ids["db-sn5"],
-                module.tokyo.subnet_ids["db-sn6"]]
-  ecs_sg_id  = module.tokyo_ecs_sg_id
+  module.tokyo.subnet_ids["db-sn6"]]
+  ecs_sg_id = module.tokyo.ecs_sg_id
 
   num_cache_clusters = 2
 }
@@ -113,13 +114,13 @@ module "s3" {
 module "client_vpn" {
   source = "./modules/client-vpn"
 
-  project           = var.project
-  vpc_id            = module.seoul_vpc_id
+  project = var.project
+  vpc_id  = module.seoul.vpc_id
   target_subnet_ids = [module.seoul.subnet_ids["db-sn5"],
-                       module.seoul.subnet_ids["db-sn6"]]
+  module.seoul.subnet_ids["db-sn6"]]
   client_cidr_block = var.vpn_client_cidr
-  authorized_cidrs  = [var.subnets_seoul["db-sn5"].cidr,
-                       var.subnets_seoul["db-sn6"].cidr] # tf-seoul-db-sn5/sn6 대역만 인가
+  authorized_cidrs = [var.subnets_seoul["db-sn5"].cidr,
+  var.subnets_seoul["db-sn6"].cidr] # tf-seoul-db-sn5/sn6 대역만 인가
 
   server_certificate_arn      = var.vpn_server_cert_arn
   client_root_certificate_arn = var.vpn_client_root_cert_arn
@@ -134,7 +135,7 @@ module "cloudwatch_seoul" {
   project          = var.project
   name             = "seoul"
   alarm_email      = var.alarm_email
-  ecs_cluster_name =  aws_ecs_cluster.tf_cluster.name
+  ecs_cluster_name = aws_ecs_cluster.tf_cluster.name
   ecs_service_name = module.web_service.service_name
   rds_identifier   = module.rds_seoul.primary_identifier
   alb_arn_suffix   = module.alb.alb_arn_suffix
@@ -178,8 +179,8 @@ module "peering_seoul_onprem" {
   accepter_vpc_cidr  = module.onprem.vpc_cidr_block
 
   requester_route_table_ids = [module.seoul.route_table_ids["pri"],
-                               module.seoul.route_table_ids["db"]] # tf-seoul-pri-rt34, tf-seoul-db-rt56
-  accepter_route_table_ids  = [module.onprem.route_table_id]
+  module.seoul.route_table_ids["db"]] # tf-seoul-pri-rt34, tf-seoul-db-rt56
+  accepter_route_table_ids = [module.onprem.route_table_id]
 }
 
 

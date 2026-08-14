@@ -1,9 +1,9 @@
 variable "vpc_id" {
-  type = string
+  type        = string
   description = "VPC ID"
 }
 
 variable "pjt_name" {
-  type = string
+  type        = string
   description = "Project Name"
 }

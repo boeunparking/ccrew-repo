@@ -75,3 +75,11 @@ variable "replicate_source_db" {
   type        = string
   default     = null
 }
+
+# 소스 DB ARN은 apply 시점에야 정해지므로 count 조건으로 쓸 수 없다.
+# 크로스 리전 replica 생성 여부는 이 플래그로 판단한다.
+variable "create_cross_region_replica" {
+  description = "크로스 리전 read replica 생성 여부"
+  type        = bool
+  default     = false
+}

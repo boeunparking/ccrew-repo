@@ -3,11 +3,11 @@ variable "name" {
 }
 
 variable "cluster_id" {
-  type        = string
+  type = string
 }
 
 variable "cluster_name" {
-  type        = string
+  type = string
 }
 
 variable "cpu" {

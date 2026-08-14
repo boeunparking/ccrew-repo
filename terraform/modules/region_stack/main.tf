@@ -78,7 +78,7 @@ resource "aws_route_table_association" "public" {
 resource "aws_route" "pub_default" {
   route_table_id         = module.pub_rt.rt_id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id              = module.vpc.igw_id
+  gateway_id             = module.vpc.igw_id
 }
 
 resource "aws_eip" "nat_eip" {
@@ -112,8 +112,8 @@ resource "aws_route_table_association" "ecs" {
 resource "aws_route" "pri_default" {
   route_table_id         = module.pri_rt.rt_id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id              = aws_nat_gateway.nat_gw.id
-  depends_on              = [aws_nat_gateway.nat_gw]
+  gateway_id             = aws_nat_gateway.nat_gw.id
+  depends_on             = [aws_nat_gateway.nat_gw]
 }
 
 module "db_rt" {
@@ -141,24 +141,24 @@ module "alb_sg" {
 
 resource "aws_vpc_security_group_ingress_rule" "alb_https" {
   security_group_id = module.alb_sg.sg_id
-  cidr_ipv4          = "0.0.0.0/0"
-  from_port          = 443
-  ip_protocol        = "tcp"
-  to_port            = 443
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  ip_protocol       = "tcp"
+  to_port           = 443
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   security_group_id = module.alb_sg.sg_id
-  cidr_ipv4          = "0.0.0.0/0"
-  from_port          = 80
-  ip_protocol        = "tcp"
-  to_port            = 80
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 80
+  ip_protocol       = "tcp"
+  to_port           = 80
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_egress" {
   security_group_id = module.alb_sg.sg_id
-  cidr_ipv4          = "0.0.0.0/0"
-  ip_protocol        = "-1" # semantically equivalent to all ports
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1" # semantically equivalent to all ports
 }
 
 module "ecs_sg" {
@@ -179,8 +179,8 @@ resource "aws_vpc_security_group_ingress_rule" "ecs_ingress" {
 
 resource "aws_vpc_security_group_egress_rule" "ecs_egress" {
   security_group_id = module.ecs_sg.sg_id
-  cidr_ipv4          = "0.0.0.0/0"
-  ip_protocol        = "-1" # semantically equivalent to all ports
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1" # semantically equivalent to all ports
 }
 
 module "db_sg" {

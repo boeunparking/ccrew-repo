@@ -1,6 +1,6 @@
 
 variable "vpc_id" {
-  type        = string
+  type = string
 }
 
 variable "desc" {
@@ -9,8 +9,8 @@ variable "desc" {
 }
 
 variable "pjt_name" {
-  type        = string
+  type = string
 }
 variable "region" {
-  type        = string
+  type = string
 }

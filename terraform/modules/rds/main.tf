@@ -128,7 +128,7 @@ resource "aws_db_instance" "replica" {
 # (도쿄 warm standby에서 create_primary=false 로 사용)
 ########################################
 resource "aws_db_instance" "cross_region_replica" {
-  count = !var.create_primary && var.replicate_source_db != null ? 1 : 0
+  count = var.create_cross_region_replica ? 1 : 0
 
   identifier          = "${var.project}-${var.name}-replica"
   replicate_source_db = var.replicate_source_db # 소스 DB의 ARN

@@ -1,15 +1,15 @@
 variable "vpc_id" {
-  type        = string
+  type = string
 }
 variable "cidr_block" {
-  type        = string
+  type = string
 }
 variable "az_name" {
-  type        = string
+  type = string
 }
 variable "pjt_name" {
-  type        = string
+  type = string
 }
 variable "region" {
-  type        = string
+  type = string
 }
