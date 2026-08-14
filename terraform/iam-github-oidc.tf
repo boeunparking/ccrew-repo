@@ -144,3 +144,65 @@ resource "aws_iam_role_policy" "github_actions_tf_state" {
     ]
   })
 }
+
+resource "aws_iam_role_policy" "github_actions_state_refresh" {
+  name = "state-refresh-readonly"
+  role = aws_iam_role.github_actions_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+            {
+        Effect   = "Allow"
+        Action   = [
+          "elasticloadbalancing:DescribeTargetGroupAttributes",
+          "elasticloadbalancing:DescribeTags",
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:DescribeRepositories",
+          "ecr:DescribeImages",
+          "ecr:ListTagsForResource",
+        ]
+        Resource = [
+          aws_ecr_repository.tf_web_ecr.arn,
+          aws_ecr_repository.tf_batch_ecr.arn,
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:DescribeLogGroups", "logs:ListTagsForResource"]
+        Resource = "*" # DescribeLogGroups는 리소스 레벨 제한을 지원 안 함
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:GetRole",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+          "iam:GetRolePolicy",
+        ]
+        Resource = [
+          module.ecs_execution.iam_role_arn,
+          module.ecs_task.iam_role_arn,
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeVpcs",
+          "ec2:DescribeVpcAttribute",
+          "ec2:DescribeSubnets",
+          "ec2:DescribeSecurityGroups",
+          "ec2:DescribeSecurityGroupRules",
+          "ec2:DescribeRouteTables",
+          "ec2:DescribeNetworkAcls",
+        ]
+        Resource = "*" # 대부분 EC2 Describe*는 리소스 레벨 제한 미지원
+      }
+    ]
+  })
+}
