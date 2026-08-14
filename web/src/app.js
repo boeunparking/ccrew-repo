@@ -23,6 +23,7 @@ export function createApp() {
   const app = express();
 
   // ALB 뒤에 있으므로 X-Forwarded-For / X-Forwarded-Host를 신뢰한다.
+
   // req.hostname이 ALB가 아닌 브라우저가 요청한 호스트를 가리키게 하려면 필수.
   app.set("trust proxy", true);
 
