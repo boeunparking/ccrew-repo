@@ -60,3 +60,36 @@ variable "subnets_tokyo" {
     db-sn6  = { cidr = "172.17.5.0/24", az = "ap-northeast-1c", tier = "db" }
   }
 }
+### cloud-duck ###
+variable "project" {
+  description = "cloud-duck 리소스 이름 접두사"
+  type        = string
+  default     = "cloud-duck"
+}
+
+variable "onprem_vpc_cidr" {
+  description = "온프레미스 VPC CIDR"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "vpn_client_cidr" {
+  description = "Client VPN 클라이언트 CIDR"
+  type        = string
+  default     = "10.200.0.0/22"
+}
+
+variable "vpn_server_cert_arn" {
+  description = "ACM 서버 인증서 ARN"
+  type        = string
+}
+
+variable "vpn_client_root_cert_arn" {
+  description = "ACM 클라이언트 루트 인증서 ARN"
+  type        = string
+}
+
+variable "alarm_email" {
+  description = "SNS 알람 수신 이메일"
+  type        = string
+}
