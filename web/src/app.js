@@ -38,6 +38,7 @@ export function createApp() {
         if (!origin) return cb(null, true);
 
         // 허용 목록에 없으면 CORS 헤더를 붙이지 않는다 → 브라우저가 차단한다.
+
         // 여기서 에러를 던지면 500이 나가므로 false만 돌려준다.
         cb(null, isAllowedOrigin(origin));
       },
