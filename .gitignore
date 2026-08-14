@@ -1,0 +1,51 @@
+# ── 의존성 / 빌드 산출물 ──────────────────────────────
+node_modules/
+dist/
+build/
+.build/
+*.tsbuildinfo
+
+# ── 환경변수 / 시크릿 ────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*_accessKeys.csv
+credentials
+
+# ── Terraform ───────────────────────────────────────
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan.binary
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+# 주의: .terraform.lock.hcl 과 terraform.tfvars 는 커밋 대상(현재 추적 중)
+
+# ── 로그 / 임시파일 ──────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+*.bak
+*.tmp
+tmp/
+coverage/
+
+# ── 에디터 / OS ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# ── Claude Code (개인 로컬 설정만 제외) ───────────────
+.claude/settings.local.json
