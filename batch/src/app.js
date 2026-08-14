@@ -1,15 +1,21 @@
-import express from 'express';
-import cors from 'cors';
-import os from 'os';
+import express from "express";
+import cors from "cors";
+import os from "os";
 
-import authRoutes from './routes/authRoutes.js';
-import auctionRoutes from './routes/auctionRoutes.js';
-import bidRoutes from './routes/bidRoutes.js';
-import meRoutes from './routes/meRoutes.js';
-import adminRoutes from './routes/adminRoutes.js';
-import uploadRoutes from './routes/uploadRoutes.js';
+import authRoutes from "./routes/authRoutes.js";
+import auctionRoutes from "./routes/auctionRoutes.js";
+import bidRoutes from "./routes/bidRoutes.js";
+import meRoutes from "./routes/meRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import uploadRoutes from "./routes/uploadRoutes.js";
 
-import { API_HOSTS, ALLOWED_ORIGINS, ENFORCE_API_HOST, isAllowedHost, isAllowedOrigin } from './config.js';
+import {
+  API_HOSTS,
+  ALLOWED_ORIGINS,
+  ENFORCE_API_HOST,
+  isAllowedHost,
+  isAllowedOrigin,
+} from "./config.js";
 
 export const state = { ready: false };
 
@@ -17,8 +23,9 @@ export function createApp() {
   const app = express();
 
   // ALB 뒤에 있으므로 X-Forwarded-For / X-Forwarded-Host를 신뢰한다.
+
   // req.hostname이 ALB가 아닌 브라우저가 요청한 호스트를 가리키게 하려면 필수.
-  app.set('trust proxy', true);
+  app.set("trust proxy", true);
 
   // 프론트(cloudduck.cloud)와 API(api.cloudduck.cloud)는 이제 서로 다른 출처다.
   // 경로 기반일 때는 같은 출처라 CORS가 필요 없었지만, 서브도메인으로 갈라진
@@ -33,25 +40,25 @@ export function createApp() {
         cb(null, isAllowedOrigin(origin));
       },
       credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization"],
       maxAge: 86400, // 프리플라이트를 하루 캐시해서 왕복을 줄인다
-    })
+    }),
   );
 
   // 캐시(CloudFront 등)가 Origin별 응답을 섞지 않게 한다
   app.use((_req, res, next) => {
-    res.vary('Origin');
+    res.vary("Origin");
     next();
   });
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: "1mb" }));
 
   // --- ALB 헬스체크 대상. 인증도, 호스트 검사도 걸지 말 것 ---
   // 헬스체크는 Host 헤더에 태스크 IP가 들어오므로 반드시 호스트 검사보다 위에 있어야 한다.
-  app.get('/health', (_req, res) => {
-    if (!state.ready) return res.status(503).send('warming');
-    res.status(200).send('ok');
+  app.get("/health", (_req, res) => {
+    if (!state.ready) return res.status(503).send("warming");
+    res.status(200).send("ok");
   });
 
   // --- 서브도메인 검사 ---
@@ -62,15 +69,15 @@ export function createApp() {
     if (!ENFORCE_API_HOST) return next();
     if (isAllowedHost(req.hostname)) return next();
     res.status(421).json({
-      error: `이 API는 ${API_HOSTS.join(', ')} 호스트로만 접근할 수 있습니다`,
+      error: `이 API는 ${API_HOSTS.join(", ")} 호스트로만 접근할 수 있습니다`,
       requestedHost: req.hostname,
     });
   });
 
   // 배포 확인용. 어느 컨테이너가 어떤 호스트로 응답했는지 보인다.
-  app.get('/ping', (req, res) => {
+  app.get("/ping", (req, res) => {
     res.json({
-      message: 'pong',
+      message: "pong",
       host: req.hostname,
       hostname: os.hostname(),
       uptimeSeconds: Math.floor(process.uptime()),
@@ -81,32 +88,37 @@ export function createApp() {
 
   // 호스트가 이미 API를 뜻하므로 /api 접두사를 붙이지 않는다.
   // 예) https://api.cloudduck.cloud/auctions
-  app.use('/auth', authRoutes);
-  app.use('/auctions', auctionRoutes);
-  app.use('/', bidRoutes); // /auctions/:id/bids, /bids/me
-  app.use('/me', meRoutes);
-  app.use('/admin', adminRoutes);
-  app.use('/uploads', uploadRoutes);
+  app.use("/auth", authRoutes);
+  app.use("/auctions", auctionRoutes);
+  app.use("/", bidRoutes); // /auctions/:id/bids, /bids/me
+  app.use("/me", meRoutes);
+  app.use("/admin", adminRoutes);
+  app.use("/uploads", uploadRoutes);
 
   app.use((req, res) => {
     // 예전 경로 기반 클라이언트가 남아 있으면 원인을 바로 알 수 있게 알려준다
-    if (req.path.startsWith('/api/')) {
+    if (req.path.startsWith("/api/")) {
       return res.status(404).json({
-        error: '/api 접두사는 없어졌습니다. 서브도메인 루트 경로로 호출해 주세요',
-        hint: `${req.path} → ${req.path.replace(/^\/api/, '')}`,
+        error:
+          "/api 접두사는 없어졌습니다. 서브도메인 루트 경로로 호출해 주세요",
+        hint: `${req.path} → ${req.path.replace(/^\/api/, "")}`,
       });
     }
-    res.status(404).json({ error: '없는 경로입니다' });
+    res.status(404).json({ error: "없는 경로입니다" });
   });
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {
-    console.error('[error]', err);
-    res.status(err.status ?? 500).json({ error: '서버에서 문제가 발생했습니다' });
+    console.error("[error]", err);
+    res
+      .status(err.status ?? 500)
+      .json({ error: "서버에서 문제가 발생했습니다" });
   });
 
-  console.log(`[boot] API 호스트: ${API_HOSTS.join(', ')} (검사 ${ENFORCE_API_HOST ? '켜짐' : '꺼짐'})`);
-  console.log(`[boot] 허용 출처: ${ALLOWED_ORIGINS.join(', ')}`);
+  console.log(
+    `[boot] API 호스트: ${API_HOSTS.join(", ")} (검사 ${ENFORCE_API_HOST ? "켜짐" : "꺼짐"})`,
+  );
+  console.log(`[boot] 허용 출처: ${ALLOWED_ORIGINS.join(", ")}`);
 
   return app;
 }
