@@ -60,7 +60,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_memory" {
 # RDS CPU / 스토리지
 ########################################
 resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
-  count = var.rds_identifier != null ? 1 : 0
+  count = var.create_rds_alarms ? 1 : 0
 
   alarm_name          = "${var.project}-${var.name}-rds-cpu-high"
   alarm_description   = "RDS CPU ${var.cpu_threshold}% 이상 5분 지속"
@@ -80,7 +80,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_storage" {
-  count = var.rds_identifier != null ? 1 : 0
+  count = var.create_rds_alarms ? 1 : 0
 
   alarm_name          = "${var.project}-${var.name}-rds-storage-low"
   alarm_description   = "RDS 여유 스토리지 2GB 미만 (총 10GB)"
@@ -103,7 +103,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage" {
 # ALB 요청 수 (Auto Scaling 기준 참고용)
 ########################################
 resource "aws_cloudwatch_metric_alarm" "alb_requests" {
-  count = var.alb_arn_suffix != "" ? 1 : 0
+  count = var.create_alb_alarm ? 1 : 0
 
   alarm_name          = "${var.project}-${var.name}-alb-request-spike"
   alarm_description   = "ALB 요청 수 급증 (5분 합계 10,000건 초과)"

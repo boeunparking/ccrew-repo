@@ -137,8 +137,10 @@ module "cloudwatch_seoul" {
   alarm_email      = var.alarm_email
   ecs_cluster_name = aws_ecs_cluster.tf_cluster.name
   ecs_service_name = module.web_service.service_name
-  rds_identifier   = module.rds_seoul.primary_identifier
-  alb_arn_suffix   = module.alb.alb_arn_suffix
+  rds_identifier    = module.rds_seoul.primary_identifier
+  create_rds_alarms = true
+  alb_arn_suffix    = module.alb.alb_arn_suffix
+  create_alb_alarm  = true
 
   cpu_threshold  = 80  # 운영 결정사항: CPU 80%
   period_seconds = 300 # 5분 지속
