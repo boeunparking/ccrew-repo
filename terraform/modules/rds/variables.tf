@@ -40,7 +40,7 @@ variable "instance_class" {
 
 variable "allocated_storage" {
   type    = number
-  default = 10 # 10GB
+  default = 20 # 10GB
 }
 
 variable "username" {
@@ -50,12 +50,12 @@ variable "username" {
 
 variable "backup_retention_period" {
   type    = number
-  default = 5 # 자동 백업 보존 기간 5일
+  default = 1 # 자동 백업 보존 기간 5일
 }
 
 variable "multi_az" {
   type    = bool
-  default = true # primary에서 multi_az=true
+  default = false # primary에서 multi_az=true
 }
 
 variable "create_primary" {
@@ -82,4 +82,21 @@ variable "create_cross_region_replica" {
   description = "크로스 리전 read replica 생성 여부"
   type        = bool
   default     = false
+}
+
+variable "primary_availability_zone" {
+  description = "Primary DB AZ (구조도 기준: ap-northeast-2a)"
+  type        = string
+  default     = null
+}
+
+variable "replica_availability_zone" {
+  description = "Read Replica AZ (구조도 기준: ap-northeast-2c)"
+  type        = string
+  default     = null
+}
+
+variable "kms_key_id" {
+  type    = string
+  default = null
 }

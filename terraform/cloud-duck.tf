@@ -18,7 +18,7 @@
 ############################################################
 
 ########################################
-# 1. RDS — 서울: Primary(Multi-AZ) + 같은 리전 Replica
+# 1. RDS — 서울: Primary(2a) + 같은 리전 Replica(2c), Multi-AZ 미사용
 ########################################
 module "rds_seoul" {
   source = "./modules/rds"
@@ -34,8 +34,10 @@ module "rds_seoul" {
   vpn_client_cidr = var.vpn_client_cidr
 
   create_primary = true
-  multi_az       = true # RDS(multi-az) 결정사항
+  multi_az       = false # RDS(multi-az) 결정사항 - free tier
   create_replica = true # RDS replica (db.t4g.micro)
+  primary_availability_zone = "ap-northeast-2a"
+  replica_availability_zone = "ap-northeast-2c"
 }
 
 ########################################
@@ -57,6 +59,7 @@ module "rds_tokyo_replica" {
   create_primary              = false
   create_replica              = false
   create_cross_region_replica = true
+  kms_key_id = aws_kms_key.rds_tokyo.arn
   replicate_source_db         = module.rds_seoul.primary_arn # 크로스 리전은 ARN 필요
 }
 
@@ -185,5 +188,20 @@ module "peering_seoul_onprem" {
   accepter_route_table_ids = [module.onprem.route_table_id]
 }
 
+# cloud-duck.tf 맨 아래쪽에 추가
 
+########################################
+# KMS — 도쿄 크로스 리전 RDS Replica 암호화용
+########################################
+resource "aws_kms_key" "rds_tokyo" {
+  provider                = aws.tokyo
+  description              = "cloud-duck RDS cross-region replica 암호화용 (Tokyo)"
+  deletion_window_in_days  = 7
+}
+
+resource "aws_kms_alias" "rds_tokyo" {
+  provider      = aws.tokyo
+  name          = "alias/cloud-duck-rds-tokyo"
+  target_key_id = aws_kms_key.rds_tokyo.key_id
+}
 
