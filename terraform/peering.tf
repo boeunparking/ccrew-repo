@@ -14,7 +14,7 @@ resource "aws_vpc_peering_connection" "seoul_tokyo" {
 resource "aws_vpc_peering_connection_accepter" "seoul_tokyo" {
   provider                  = aws.tokyo
   vpc_peering_connection_id = aws_vpc_peering_connection.seoul_tokyo.id
-  auto_accept                = true
+  auto_accept               = true
 
   tags = {
     Name = "seoul-tokyo-peering-accept"
@@ -29,15 +29,15 @@ resource "aws_route" "seoul_db_to_tokyo" {
   route_table_id            = module.seoul.route_table_ids["db"]
   destination_cidr_block    = var.vpc_cidr_tokyo
   vpc_peering_connection_id = aws_vpc_peering_connection.seoul_tokyo.id
-  depends_on                 = [aws_vpc_peering_connection_accepter.seoul_tokyo]
+  depends_on                = [aws_vpc_peering_connection_accepter.seoul_tokyo]
 }
 
 resource "aws_route" "tokyo_db_to_seoul" {
-  provider                   = aws.tokyo
-  route_table_id             = module.tokyo.route_table_ids["db"]
-  destination_cidr_block     = var.vpc_cidr_seoul
-  vpc_peering_connection_id  = aws_vpc_peering_connection.seoul_tokyo.id
-  depends_on                  = [aws_vpc_peering_connection_accepter.seoul_tokyo]
+  provider                  = aws.tokyo
+  route_table_id            = module.tokyo.route_table_ids["db"]
+  destination_cidr_block    = var.vpc_cidr_seoul
+  vpc_peering_connection_id = aws_vpc_peering_connection.seoul_tokyo.id
+  depends_on                = [aws_vpc_peering_connection_accepter.seoul_tokyo]
 }
 
 
@@ -47,10 +47,10 @@ resource "aws_route" "tokyo_db_to_seoul" {
 
 resource "aws_vpc_security_group_ingress_rule" "seoul_db_from_tokyo_replica" {
   security_group_id = module.seoul.db_sg_id
-  cidr_ipv4          = module.tokyo.db_cidr_23
-  from_port          = 3306
-  ip_protocol        = "tcp"
-  to_port            = 3306
+  cidr_ipv4         = module.tokyo.db_cidr_23
+  from_port         = 3306
+  ip_protocol       = "tcp"
+  to_port           = 3306
 }
 
 

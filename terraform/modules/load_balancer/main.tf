@@ -1,20 +1,20 @@
 // ALB 생성
 resource "aws_lb" "tf_alb" {
-  name                       = "tf-alb"
-  internal                   = false
-  load_balancer_type         = "application"
-  subnets                    = var.subnet_ids
-  security_groups            = [var.security_group_id]
+  name               = "tf-alb"
+  internal           = false
+  load_balancer_type = "application"
+  subnets            = var.subnet_ids
+  security_groups    = [var.security_group_id]
 
   enable_deletion_protection = false
 }
 
 // 대상 그룹 생성
 resource "aws_lb_target_group" "tf_web_tg" {
-  name     = "tf-web-tg"
-  port     = 3000
-  protocol = "HTTP"
-  vpc_id   = var.vpc_id
+  name        = "tf-web-tg"
+  port        = 3000
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
   target_type = "ip" # Fargate는 반드시 ip 타입
 
   health_check {

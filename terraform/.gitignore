@@ -22,3 +22,8 @@ terraform.rc
 
 # Lambda 패키징 산출물
 .build/
+
+# 김혜수 + ACM인증서 암호
+*.tfvars
+easy-rsa
+*.key

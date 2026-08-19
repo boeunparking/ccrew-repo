@@ -8,5 +8,5 @@ variable "subnet_ids" {
   type = list(any)
 }
 variable "certificate_arn" {
-  type        = string
+  type = string
 }
