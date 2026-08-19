@@ -85,3 +85,30 @@ output "seoul_ecs_service_name" {
 output "seoul_alb_arn_suffix" {
   value = module.alb.alb_arn_suffix
 }
+
+
+### ---- 컴퓨트 (도쿄) ---- ###
+
+output "tokyo_ecs_cluster_name" {
+  value = aws_ecs_cluster.tf_cluster_tokyo.name
+}
+
+output "tokyo_ecs_service_name" {
+  value = module.web_service_tokyo.service_name
+}
+
+output "tokyo_alb_arn_suffix" {
+  value = module.alb_tokyo.alb_arn_suffix
+}
+
+
+### ---- Failover (Route 53) ---- ###
+
+output "api_fqdn" {
+  description = "이 주소로 접속하면 평상시 서울, 서울 장애 시 도쿄로 자동 failover 된다"
+  value       = local.api_fqdn
+}
+
+output "seoul_health_check_id" {
+  value = aws_route53_health_check.seoul_alb.id
+}

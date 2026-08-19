@@ -33,9 +33,9 @@ module "rds_seoul" {
   # VPN 관리자 → DB 3306 허용 (VPN 관리자 접근 매트릭스)
   vpn_client_cidr = var.vpn_client_cidr
 
-  create_primary = true
-  multi_az       = false # RDS(multi-az) 결정사항 - free tier
-  create_replica = true # RDS replica (db.t4g.micro)
+  create_primary            = true
+  multi_az                  = false # RDS(multi-az) 결정사항 - free tier
+  create_replica            = true  # RDS replica (db.t4g.micro)
   primary_availability_zone = "ap-northeast-2a"
   replica_availability_zone = "ap-northeast-2c"
 }
@@ -59,8 +59,14 @@ module "rds_tokyo_replica" {
   create_primary              = false
   create_replica              = false
   create_cross_region_replica = true
-  kms_key_id = aws_kms_key.rds_tokyo.arn
+  kms_key_id                  = aws_kms_key.rds_tokyo.arn
   replicate_source_db         = module.rds_seoul.primary_arn # 크로스 리전은 ARN 필요
+
+  # 도쿄용 Secrets Manager — replica는 자체 비밀번호를 가질 수 없으므로
+  # 서울 primary와 동일한 계정정보를 그대로 저장하고, host만 도쿄 replica 엔드포인트로 기록한다.
+  create_secret   = true
+  secret_username = "admin" # modules/rds username 기본값과 동일 (rds_seoul도 기본값 사용 중)
+  secret_password = module.rds_seoul.primary_password
 }
 
 ########################################
@@ -135,11 +141,11 @@ module "client_vpn" {
 module "cloudwatch_seoul" {
   source = "./modules/cloudwatch"
 
-  project          = var.project
-  name             = "seoul"
-  alarm_email      = var.alarm_email
-  ecs_cluster_name = aws_ecs_cluster.tf_cluster.name
-  ecs_service_name = module.web_service.service_name
+  project           = var.project
+  name              = "seoul"
+  alarm_email       = var.alarm_email
+  ecs_cluster_name  = aws_ecs_cluster.tf_cluster.name
+  ecs_service_name  = module.web_service.service_name
   rds_identifier    = module.rds_seoul.primary_identifier
   create_rds_alarms = true
   alb_arn_suffix    = module.alb.alb_arn_suffix
@@ -195,8 +201,8 @@ module "peering_seoul_onprem" {
 ########################################
 resource "aws_kms_key" "rds_tokyo" {
   provider                = aws.tokyo
-  description              = "cloud-duck RDS cross-region replica 암호화용 (Tokyo)"
-  deletion_window_in_days  = 7
+  description             = "cloud-duck RDS cross-region replica 암호화용 (Tokyo)"
+  deletion_window_in_days = 7
 }
 
 resource "aws_kms_alias" "rds_tokyo" {
