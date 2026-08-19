@@ -1,7 +1,8 @@
 ########################################
 # 온프레미스(로 표기된) 스택 — 서울 리전 ap-northeast-2b
 # MinIO 백업 서버 1대 + 전용 VPC
-# 피어링 연결/양방향 라우트는 루트의 module "peering_seoul_onprem" 이 담당
+# 서울 ↔ 온프레미스 연결은 루트의 module "site_to_site_vpn_onprem" (Site-to-Site VPN)이 담당.
+# 이 모듈이 만드는 EIP를 물고 있는 EC2가 strongSwan으로 터널을 종단한다 (vpn-strongswan.tf).
 ########################################
 
 ########################################
@@ -40,7 +41,8 @@ resource "aws_internet_gateway" "this" {
 ########################################
 # 4. Route Table (onprem-rt1)
 #    0.0.0.0/0 → IGW 만 여기서 생성.
-#    172.16.0.0/16(서울) → 피어링 라우트는 vpc-peering 모듈이 자동 추가
+#    172.16.0.0/16(서울) 방향은 VPC 라우팅 테이블에 경로를 추가하지 않는다 —
+#    EC2 위 strongSwan이 IPSec 정책(SPD) 레벨에서 터널링을 처리하므로 불필요.
 ########################################
 resource "aws_route_table" "rt1" {
   vpc_id = aws_vpc.this.id
@@ -87,6 +89,36 @@ resource "aws_vpc_security_group_egress_rule" "all" {
   description       = "Package install - tighten after setup"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
+}
+
+########################################
+# 6-1. Site-to-Site VPN 터널 트래픽
+#      AWS 쪽 터널 엔드포인트 2개는 리전 내 동적 공인 IP라 사전에 고정할 수 없어
+#      IKE/ESP 표준 포트로만 허용을 좁힌다 (실제 고객 라우터 방화벽 정책과 동일한 접근)
+########################################
+resource "aws_vpc_security_group_ingress_rule" "vpn_ike" {
+  security_group_id = aws_security_group.app.id
+  description        = "IKE (IPSec key exchange) from AWS VPN tunnel endpoints"
+  cidr_ipv4          = "0.0.0.0/0"
+  ip_protocol        = "udp"
+  from_port           = 500
+  to_port              = 500
+}
+
+resource "aws_vpc_security_group_ingress_rule" "vpn_nat_t" {
+  security_group_id = aws_security_group.app.id
+  description        = "IPSec NAT-Traversal from AWS VPN tunnel endpoints"
+  cidr_ipv4          = "0.0.0.0/0"
+  ip_protocol        = "udp"
+  from_port           = 4500
+  to_port              = 4500
+}
+
+resource "aws_vpc_security_group_ingress_rule" "vpn_esp" {
+  security_group_id = aws_security_group.app.id
+  description        = "ESP (encrypted IPSec payload) from AWS VPN tunnel endpoints"
+  cidr_ipv4          = "0.0.0.0/0"
+  ip_protocol        = "50" # ESP
 }
 
 ########################################
@@ -190,7 +222,23 @@ resource "aws_instance" "app" {
   vpc_security_group_ids = [aws_security_group.app.id]
   iam_instance_profile   = aws_iam_instance_profile.app.name
 
+  # Site-to-Site VPN에서 이 인스턴스가 IPSec 터널을 종단하는 "고객 게이트웨이" 겸
+  # 온프레미스 라우터 역할을 하므로, 자기 것이 아닌 트래픽(터널로 오가는 패킷)도
+  # 통과시킬 수 있어야 한다. AWS 기본값(활성화)은 이를 막는다.
+  source_dest_check = false
+
   tags = { Name = "onprem-app-ec2" }
+}
+
+########################################
+# 9-1. Elastic IP — Customer Gateway가 식별할 고정 퍼블릭 IP
+#      (진짜 온프레미스라면 이미 있는 라우터의 공인 IP에 해당)
+########################################
+resource "aws_eip" "app" {
+  instance = aws_instance.app.id
+  domain   = "vpc"
+
+  tags = { Name = "onprem-app-eip" }
 }
 
 ########################################
