@@ -91,7 +91,9 @@ resource "aws_db_instance" "primary" {
   allocated_storage = var.allocated_storage
   storage_type      = "gp3"
   storage_encrypted = true
-  kms_key_id        = var.kms_key_id # null이면 AWS 관리형 aws/rds 키 사용
+  # kms_key_id는 일부러 안 씀: null(기본 관리형 키)을 명시하면 Terraform이
+  # "설정값이 바뀌었다"고 오인해 실제 운영 중인 RDS를 강제로 재생성(삭제+재생성)한다.
+  # 크로스 리전 replica(cross_region_replica)는 KMS 지정이 필수라 거기서는 그대로 쓴다.
 
   username = var.username
   password = random_password.db[0].result
@@ -100,7 +102,7 @@ resource "aws_db_instance" "primary" {
   vpc_security_group_ids = [aws_security_group.db.id]
   publicly_accessible    = false
 
-  multi_az                = var.multi_az # multi_az=false -> free tier 때문에
+  multi_az                = var.multi_az
   backup_retention_period = var.backup_retention_period
   backup_window           = "17:00-18:00" # UTC = KST 02:00-03:00
   maintenance_window      = "sun:18:00-sun:19:00"

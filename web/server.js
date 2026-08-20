@@ -4,7 +4,8 @@ import crypto from 'crypto';
 
 import { createApp, state } from './src/app.js';
 import { attachRealtime } from './src/realtime.js';
-import { users } from './src/store.js';
+import { upsertUser } from './src/store.js';
+import pool from './src/db.js';
 
 const PORT = process.env.PORT || 3000;
 
@@ -18,10 +19,15 @@ attachRealtime(server);
  * 그러면 ALB가 아직 준비 안 된 태스크로는 트래픽을 보내지 않는다.
  */
 async function warmup() {
+  // RDS가 아직 안 떠 있으면 여기서 대기하게 된다 — /health가 계속 503을 반환해
+  // ALB가 이 태스크로 트래픽을 안 보내므로 안전하다.
+  await pool.query('SELECT 1');
+
   // 데모용 관리자 계정. 실제 배포에서는 반드시 지우거나 시드 스크립트로 분리할 것.
+  // upsert라서 재배포마다 다시 만들어도 에러 나지 않는다.
   const email = process.env.ADMIN_EMAIL || 'admin@cloudduck.cloud';
   const password = process.env.ADMIN_PASSWORD || 'admin1234';
-  users.set(email, {
+  await upsertUser({
     id: crypto.randomUUID(),
     email,
     passwordHash: await bcrypt.hash(password, 10),

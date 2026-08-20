@@ -102,13 +102,14 @@ output "tokyo_alb_arn_suffix" {
 }
 
 
-### ---- Failover (Route 53) ---- ###
+### ---- Failover (Global Accelerator) ---- ###
 
 output "api_fqdn" {
-  description = "이 주소로 접속하면 평상시 서울, 서울 장애 시 도쿄로 자동 failover 된다"
-  value       = local.api_fqdn
+  description = "이 주소로 접속하면 Global Accelerator가 평상시 서울로 보내고, 서울 헬스체크 실패 시 (dial_percentage 조정을 통해) 도쿄로 전환할 수 있다"
+  value       = aws_route53_record.api.name
 }
 
-output "seoul_health_check_id" {
-  value = aws_route53_health_check.seoul_alb.id
+output "accelerator_dns_name" {
+  description = "Global Accelerator 자체의 anycast DNS 이름"
+  value       = aws_globalaccelerator_accelerator.api.dns_name
 }

@@ -6,6 +6,11 @@ output "alb_arn_suffix" {
   value = aws_lb.tf_alb.arn_suffix
 }
 
+output "alb_arn" {
+  description = "Global Accelerator 엔드포인트로 등록할 ALB 자체의 ARN"
+  value       = aws_lb.tf_alb.arn
+}
+
 output "alb_dns_name" {
   value = aws_lb.tf_alb.dns_name
 }

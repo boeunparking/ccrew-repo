@@ -3,7 +3,7 @@
 #
 # "낙찰되었습니다" 메일은 수신자가 매번 다르므로(입찰 승자), 고정 구독자에게
 # 보내는 SNS 토픽이 아니라 SES SendEmail(수신자를 호출 시점에 지정)이 맞는 도구다.
-# route53-failover.tf에서 이미 조회해둔 기존 cloudduck.cloud 존을 그대로 쓴다.
+# route53.tf에서 이미 조회해둔 기존 cloudduck.cloud 존을 그대로 쓴다.
 ############################################################
 
 resource "aws_sesv2_email_identity" "cloudduck" {
@@ -18,7 +18,7 @@ resource "aws_sesv2_email_identity" "cloudduck" {
 resource "aws_route53_record" "ses_dkim" {
   count = 3
 
-  zone_id = data.aws_route53_zone.primary.zone_id
+  zone_id = data.aws_route53_zone.cloudduck.zone_id
   name    = "${aws_sesv2_email_identity.cloudduck.dkim_signing_attributes[0].tokens[count.index]}._domainkey.${var.domain_name}"
   type    = "CNAME"
   ttl     = 600

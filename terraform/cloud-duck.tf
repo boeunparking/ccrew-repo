@@ -48,8 +48,8 @@ module "rds_seoul" {
   vpn_client_cidr = var.vpn_client_cidr
 
   create_primary            = true
-  multi_az                  = false # RDS(multi-az) 결정사항 - free tier
-  create_replica            = true  # RDS replica (db.t4g.micro)
+  multi_az                  = true # 프리티어 아님 - Multi-AZ 활성화
+  create_replica            = true # RDS replica (db.t4g.micro)
   primary_availability_zone = "ap-northeast-2a"
   replica_availability_zone = "ap-northeast-2c"
   kms_key_id                = aws_kms_key.seoul.arn
@@ -199,8 +199,8 @@ module "site_to_site_vpn_onprem" {
   seoul_route_table_ids = [module.seoul.route_table_ids["pri"],
   module.seoul.route_table_ids["db"]] # tf-seoul-pri-rt34, tf-seoul-db-rt56
 
-  onprem_cidr          = module.onprem.vpc_cidr_block
-  customer_gateway_ip  = module.onprem.eip_public_ip
+  onprem_cidr         = module.onprem.vpc_cidr_block
+  customer_gateway_ip = module.onprem.eip_public_ip
 }
 
 # cloud-duck.tf 맨 아래쪽에 추가

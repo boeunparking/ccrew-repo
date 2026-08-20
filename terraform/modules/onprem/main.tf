@@ -98,27 +98,27 @@ resource "aws_vpc_security_group_egress_rule" "all" {
 ########################################
 resource "aws_vpc_security_group_ingress_rule" "vpn_ike" {
   security_group_id = aws_security_group.app.id
-  description        = "IKE (IPSec key exchange) from AWS VPN tunnel endpoints"
-  cidr_ipv4          = "0.0.0.0/0"
-  ip_protocol        = "udp"
-  from_port           = 500
-  to_port              = 500
+  description       = "IKE (IPSec key exchange) from AWS VPN tunnel endpoints"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "udp"
+  from_port         = 500
+  to_port           = 500
 }
 
 resource "aws_vpc_security_group_ingress_rule" "vpn_nat_t" {
   security_group_id = aws_security_group.app.id
-  description        = "IPSec NAT-Traversal from AWS VPN tunnel endpoints"
-  cidr_ipv4          = "0.0.0.0/0"
-  ip_protocol        = "udp"
-  from_port           = 4500
-  to_port              = 4500
+  description       = "IPSec NAT-Traversal from AWS VPN tunnel endpoints"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "udp"
+  from_port         = 4500
+  to_port           = 4500
 }
 
 resource "aws_vpc_security_group_ingress_rule" "vpn_esp" {
   security_group_id = aws_security_group.app.id
-  description        = "ESP (encrypted IPSec payload) from AWS VPN tunnel endpoints"
-  cidr_ipv4          = "0.0.0.0/0"
-  ip_protocol        = "50" # ESP
+  description       = "ESP (encrypted IPSec payload) from AWS VPN tunnel endpoints"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "50" # ESP
 }
 
 ########################################
