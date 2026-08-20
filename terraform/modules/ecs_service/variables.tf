@@ -51,6 +51,15 @@ variable "environment" {
   default = []
 }
 
+variable "secrets" {
+  description = "Secrets Manager/SSM에서 컨테이너 시작 시점에 주입할 민감값 목록 (예: DB 비밀번호)"
+  type = list(object({
+    name      = string
+    valueFrom = string
+  }))
+  default = []
+}
+
 variable "log_group" {
   type = string
 }

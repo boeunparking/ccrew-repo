@@ -1,12 +1,12 @@
-image_tag_web   = "bootstrap"
-image_tag_batch = "bootstrap"
-certificate_arn = "arn:aws:acm:ap-northeast-2:033177021117:certificate/92a3fd3f-214c-48e7-ba9d-e5fa48c53ce4"
-# TODO: 도쿄(ap-northeast-1) 리전에 ACM 인증서를 별도로 발급/검증한 뒤 그 ARN으로 교체할 것.
-# ACM은 리전 단위 리소스라 서울 인증서를 재사용할 수 없음 — 아래 값은 placeholder이며 그대로 apply하면 실패함.
-certificate_arn_tokyo = "arn:aws:acm:ap-northeast-1:033177021117:certificate/REPLACE_ME"
+image_tag_web         = "f19e49b51ff5d8034ce4ffcf5c6f2d0b293cb73d" # hyesuDB PR 머지 후 CI가 빌드한 이미지
+image_tag_batch       = "f19e49b51ff5d8034ce4ffcf5c6f2d0b293cb73d"
+certificate_arn       = "arn:aws:acm:ap-northeast-2:033177021117:certificate/92a3fd3f-214c-48e7-ba9d-e5fa48c53ce4"
+certificate_arn_tokyo = "arn:aws:acm:ap-northeast-1:033177021117:certificate/0518d7cb-9497-4af9-b6f4-7940a9edd525" # cloudduck.cloud (도쿄 리전 발급분, ISSUED)
 github_org            = "boeunparking"
 github_repo           = "ccrew-repo"
 
-vpn_server_cert_arn      = "arn:aws:acm:ap-northeast-2:033177021117:certificate/3bc3bd19-7448-474a-959a-4aeb8f0caa1e"
+vpn_server_cert_arn = "arn:aws:acm:ap-northeast-2:033177021117:certificate/bb746fa5-e2e3-4805-a31b-994ca9163258" # vpn.cloudduck.cloud
+# TODO: easy-rsa로 별도 CA 인증서를 만들어서 그 ARN으로 교체할 것.
+# 아직 서버 인증서(3bc3bd19...)를 그대로 재사용 중이라 대기 상태 — CA 인증서 없이는 그대로 apply해도 실패함.
 vpn_client_root_cert_arn = "arn:aws:acm:ap-northeast-2:033177021117:certificate/3bc3bd19-7448-474a-959a-4aeb8f0caa1e"
 alarm_email              = "ccrewduck@gmail.com"

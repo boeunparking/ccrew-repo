@@ -36,6 +36,24 @@ resource "aws_iam_role_policy_attachment" "ecs_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# 컨테이너 시작 시점에 secrets(DB_USER/DB_PASSWORD 등)를 Secrets Manager에서 꺼내오려면
+# task role이 아니라 execution role에 읽기 권한이 있어야 한다.
+data "aws_iam_policy_document" "ecs_execution_read_db_secrets" {
+  statement {
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      module.rds_seoul.secret_arn,
+      module.rds_tokyo_replica.secret_arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "ecs_execution_read_db_secrets" {
+  name   = "ecs-execution-read-db-secrets"
+  role   = module.ecs_execution.iam_role_name
+  policy = data.aws_iam_policy_document.ecs_execution_read_db_secrets.json
+}
+
 # ECS Task Role - S3 접근 + Secrets Manager 접근
 module "ecs_task" {
   source  = "./modules/iam_role"
@@ -208,6 +226,14 @@ module "web_service" {
     # 앱 코드는 REDIS_URL이라는 이름을 읽지만 실제 엔진은 Valkey(Redis 프로토콜 호환)다.
     # transit_encryption_enabled=true라서 TLS 스킴(rediss://)이 필수.
     { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
+    # db.js가 host/port/db name을 따로 읽는다 — endpoint는 "host:port"라 그대로 못 씀.
+    { name = "DB_HOST", value = module.rds_seoul.db_address },
+    { name = "DB_PORT", value = "3306" },
+    { name = "DB_NAME", value = "cloud_duck" },
+  ]
+  secrets = [
+    { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
+    { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
   ]
 
   desired_count                 = 2
@@ -255,6 +281,16 @@ module "web_service_tokyo" {
     # 서울 Valkey를 넘어다니지 않고 도쿄 자체 Valkey를 쓴다 - failover 중에
     # 서울이 죽어도 도쿄가 서울 캐시에 의존하지 않도록.
     { name = "REDIS_URL", value = "rediss://${module.cache_tokyo.primary_endpoint}:6379" },
+    # 도쿄는 읽기 전용 크로스 리전 replica라 쓰기 요청(회원가입/입찰 등)은 여기서 실패한다 —
+    # GA traffic_dial이 0%로 막혀있는 것도 이 때문(globalaccelerator.tf 참고). 그래도 부팅
+    # 자체는 DB_HOST 없이는 안 되므로(warmup의 SELECT 1) 접속 정보는 넣어준다.
+    { name = "DB_HOST", value = module.rds_tokyo_replica.db_address },
+    { name = "DB_PORT", value = "3306" },
+    { name = "DB_NAME", value = "cloud_duck" },
+  ]
+  secrets = [
+    { name = "DB_USER", valueFrom = "${module.rds_tokyo_replica.secret_arn}:username::" },
+    { name = "DB_PASSWORD", valueFrom = "${module.rds_tokyo_replica.secret_arn}:password::" },
   ]
 
   desired_count                 = 2

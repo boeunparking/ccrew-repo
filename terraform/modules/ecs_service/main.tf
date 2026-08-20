@@ -22,6 +22,7 @@ resource "aws_ecs_task_definition" "tf_task" {
       ]
 
       environment = var.environment
+      secrets     = var.secrets
 
       logConfiguration = {
         logDriver = "awslogs"
