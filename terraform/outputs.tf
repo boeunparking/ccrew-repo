@@ -85,3 +85,31 @@ output "seoul_ecs_service_name" {
 output "seoul_alb_arn_suffix" {
   value = module.alb.alb_arn_suffix
 }
+
+
+### ---- 컴퓨트 (도쿄) ---- ###
+
+output "tokyo_ecs_cluster_name" {
+  value = aws_ecs_cluster.tf_cluster_tokyo.name
+}
+
+output "tokyo_ecs_service_name" {
+  value = module.web_service_tokyo.service_name
+}
+
+output "tokyo_alb_arn_suffix" {
+  value = module.alb_tokyo.alb_arn_suffix
+}
+
+
+### ---- Failover (Global Accelerator) ---- ###
+
+output "api_fqdn" {
+  description = "이 주소로 접속하면 Global Accelerator가 평상시 서울로 보내고, 서울 헬스체크 실패 시 (dial_percentage 조정을 통해) 도쿄로 전환할 수 있다"
+  value       = aws_route53_record.api.name
+}
+
+output "accelerator_dns_name" {
+  description = "Global Accelerator 자체의 anycast DNS 이름"
+  value       = aws_globalaccelerator_accelerator.api.dns_name
+}

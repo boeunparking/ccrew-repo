@@ -1,24 +1,17 @@
 {
-  "name": "y",
+  "name": "clduck-worker",
   "version": "1.0.0",
-  "description": "",
+  "description": "낙찰 알림 + 인기 상품 통계 백그라운드 워커 (Fargate Spot)",
   "license": "ISC",
   "author": "",
   "type": "module",
-  "main": "server.js",
+  "main": "worker.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node worker.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.400.0",
-    "@aws-sdk/s3-request-presigner": "^3.400.0",
-    "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "ioredis": "^5.4.1",
-    "jsonwebtoken": "^9.0.2",
-    "mysql2": "^3.11.0",
-    "ws": "^8.17.0"
+    "@aws-sdk/client-sesv2": "^3.400.0",
+    "redis": "^4.7.0"
   }
 }

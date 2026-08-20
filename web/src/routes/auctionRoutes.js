@@ -11,7 +11,7 @@ import {
   toImagePath,
 } from "../store.js";
 import { requireAuth } from "../authMiddleware.js";
-import { initAuctionPrice } from "../valkey.js";
+import redis, { initAuctionPrice } from "../valkey.js";
 
 const router = Router();
 
@@ -131,6 +131,14 @@ router.post("/", requireAuth, async (req, res) => {
   // Valkey에 시작가를 심어둔다 — 이게 없으면 첫 입찰 시 bid.lua가
   // "AUCTION_NOT_FOUND"로 실패한다.
   await initAuctionPrice(auction.id, price);
+
+  // 워커(batch)가 마감된 경매를 찾을 수 있게 Valkey에도 등록한다.
+  // RDS는 워커가 직접 조회하지 않으므로(worker.js는 Valkey만 본다) 여기 등록이 필수다.
+  // 실패해도 경매 등록 자체는 이미 RDS에 성공했으니 응답을 막지 않는다.
+  await Promise.all([
+    redis.zadd("auctions:open", endsAt.getTime(), auction.id),
+    redis.hset(`auction:${auction.id}:meta`, "name", auction.name),
+  ]).catch((e) => console.error("[auction] 워커용 Valkey 등록 실패:", e.message));
 
   res.status(201).json({ id: auction.id });
 });

@@ -13,14 +13,11 @@ const BID_SCRIPT = fs.readFileSync(path.join(__dirname, 'lua', 'bid.lua'), 'utf8
 
 const MIN_INCREMENT = 1000; // bidRoutes.js와 동일한 값 — 나중에 하나로 합쳐야 함
 
-const redis = new Redis({
-  host: process.env.VALKEY_HOST,
-  port: Number(process.env.VALKEY_PORT ?? 6379),
-  // elasticache/main.tf 에서 transit_encryption_enabled = true 로 되어 있어서
-  // 운영에서는 TLS 없이 접속하면 연결 자체가 안 된다.
-  // 로컬 docker valkey는 TLS 리스너가 없으므로 VALKEY_TLS=false로 꺼서 테스트한다.
-  tls: process.env.VALKEY_TLS === 'false' ? undefined : {},
-});
+// REDIS_URL 스킴으로 TLS 여부가 결정된다 (rediss:// = TLS 켜짐, redis:// = 꺼짐).
+// compute.tf가 실제로 이 이름(REDIS_URL)으로 rediss://... 를 주입한다 — batch(워커)의
+// redisClient.js와 환경변수 이름을 통일해서, 배포 설정을 한 가지 관례로 맞췄다.
+// 로컬 docker valkey는 TLS가 없으니 REDIS_URL=redis://localhost:6379로 테스트한다.
+const redis = new Redis(process.env.REDIS_URL);
 
 function priceKey(auctionId) {
   return `auction:${auctionId}:price`;

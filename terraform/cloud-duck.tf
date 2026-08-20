@@ -18,6 +18,20 @@
 ############################################################
 
 ########################################
+# 0. KMS — 서울 리전 데이터 암호화용 (RDS + S3 Source 공용)
+# 도쿄는 aws_kms_key.rds_tokyo(파일 하단)가 이미 같은 역할을 한다.
+########################################
+resource "aws_kms_key" "seoul" {
+  description             = "cloud-duck 서울 리전 데이터 암호화용 (RDS + S3)"
+  deletion_window_in_days = 7
+}
+
+resource "aws_kms_alias" "seoul" {
+  name          = "alias/cloud-duck-seoul"
+  target_key_id = aws_kms_key.seoul.key_id
+}
+
+########################################
 # 1. RDS — 서울: Primary(2a) + 같은 리전 Replica(2c), Multi-AZ 미사용
 ########################################
 module "rds_seoul" {
@@ -34,10 +48,11 @@ module "rds_seoul" {
   vpn_client_cidr = var.vpn_client_cidr
 
   create_primary            = true
-  multi_az                  = false # RDS(multi-az) 결정사항 - free tier
-  create_replica            = true  # RDS replica (db.t4g.micro)
+  multi_az                  = true # 프리티어 아님 - Multi-AZ 활성화
+  create_replica            = true # RDS replica (db.t4g.micro)
   primary_availability_zone = "ap-northeast-2a"
   replica_availability_zone = "ap-northeast-2c"
+  kms_key_id                = aws_kms_key.seoul.arn
 }
 
 ########################################
@@ -61,6 +76,12 @@ module "rds_tokyo_replica" {
   create_cross_region_replica = true
   kms_key_id                  = aws_kms_key.rds_tokyo.arn
   replicate_source_db         = module.rds_seoul.primary_arn # 크로스 리전은 ARN 필요
+
+  # 도쿄용 Secrets Manager — replica는 자체 비밀번호를 가질 수 없으므로
+  # 서울 primary와 동일한 계정정보를 그대로 저장하고, host만 도쿄 replica 엔드포인트로 기록한다.
+  create_secret   = true
+  secret_username = "admin" # modules/rds username 기본값과 동일 (rds_seoul도 기본값 사용 중)
+  secret_password = module.rds_seoul.primary_password
 }
 
 ########################################
@@ -109,6 +130,7 @@ module "s3" {
   project                 = var.project
   source_bucket_name      = "${var.project}-source-apne2"
   destination_bucket_name = "${var.project}-crr-apne1"
+  source_kms_key_id       = aws_kms_key.seoul.arn
 }
 
 ########################################

@@ -11,7 +11,7 @@ import {
 } from '../store.js';
 import { requireAuth } from '../authMiddleware.js';
 import { broadcast } from '../realtime.js';
-import { attemptBid } from '../valkey.js';
+import redis, { attemptBid } from '../valkey.js';
 
 const router = Router();
 
@@ -19,9 +19,9 @@ const MIN_INCREMENT = 1000;
 
 // POST /auctions/:id/bids  { price }
 //
-// 현재가 갱신의 원자성은 더 이상 이 프로세스 안의 락(withLock)이 아니라
-// Valkey에서 실행되는 bid.lua 스크립트가 보장한다 (attemptBid).
-// ECS 태스크가 여러 개여도 모든 태스크가 같은 Valkey를 보므로 안전하다.
+// 현재가 갱신의 원자성은 이 프로세스 안의 락이 아니라 Valkey에서 실행되는
+// bid.lua 스크립트가 보장한다 (attemptBid). ECS 태스크가 여러 개여도 모든
+// 태스크가 같은 Valkey를 보므로 레이스 컨디션이 생길 수 없다.
 router.post('/auctions/:id/bids', requireAuth, async (req, res) => {
   const auctionId = req.params.id;
   const price = Number(req.body?.price);
@@ -64,6 +64,18 @@ router.post('/auctions/:id/bids', requireAuth, async (req, res) => {
     // Valkey가 승인한 값(currentPrice)을 RDS에도 반영해 둘을 동기화한다.
     await createBid(bid);
     await updateAuctionCurrentPrice(auctionId, currentPrice);
+
+    // 낙찰 알림/인기 상품 통계 워커(batch)가 쓸 상태 갱신.
+    // 여기서 실패해도 입찰 자체는 이미 성공했으니 응답을 막지 않는다.
+    await Promise.all([
+      redis.hset(`auction:${auctionId}:leader`,
+        'userId', bid.userId,
+        'nickname', bid.nickname,
+        'email', req.user.email,
+        'price', String(bid.price),
+      ),
+      redis.zincrby('auction:popularity', 1, auctionId),
+    ]).catch((e) => console.error('[bid] 워커용 상태 갱신 실패:', e.message));
 
     // 같은 경매를 보고 있는 모든 브라우저에 밀어준다
     broadcast(auctionId, {
