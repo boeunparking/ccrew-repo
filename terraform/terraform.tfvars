@@ -1,5 +1,5 @@
-image_tag_web         = "f19e49b51ff5d8034ce4ffcf5c6f2d0b293cb73d" # hyesuDB PR 머지 후 CI가 빌드한 이미지
-image_tag_batch       = "f19e49b51ff5d8034ce4ffcf5c6f2d0b293cb73d"
+image_tag_web         = "2eb3f29b1d453b540cfdfc2c032478cf4764b0be" # PR #3 머지 후 CI가 빌드한 이미지 (DB 접속 수정 포함)
+image_tag_batch       = "2eb3f29b1d453b540cfdfc2c032478cf4764b0be"
 certificate_arn       = "arn:aws:acm:ap-northeast-2:033177021117:certificate/92a3fd3f-214c-48e7-ba9d-e5fa48c53ce4"
 certificate_arn_tokyo = "arn:aws:acm:ap-northeast-1:033177021117:certificate/0518d7cb-9497-4af9-b6f4-7940a9edd525" # cloudduck.cloud (도쿄 리전 발급분, ISSUED)
 github_org            = "boeunparking"
