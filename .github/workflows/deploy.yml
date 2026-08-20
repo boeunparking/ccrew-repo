@@ -90,6 +90,7 @@ jobs:
             -var "image_tag_web=$IMAGE_TAG" \
             -var "image_tag_batch=$IMAGE_TAG" \
             -var "certificate_arn=${{ secrets.CERTIFICATE_ARN }}" \
-            -var "certificate_arn_tokyo=${{ secrets.CERTIFICATE_ARN_TOKYO }}" \
-            -var "github_org=${{ github.repository_owner }}" \
-            -var "github_repo=${{ github.event.repository.name }}"
+            -var "certificate_arn_tokyo=${{ secrets.CERTIFICATE_ARN_TOKYO }}"
+        # github_org / github_repo 는 더 이상 넘기지 않는다 — GitHub OIDC/IAM 롤이
+        # terraform-bootstrap 으로 분리되면서 메인 스택에 그 변수 선언이 없어졌다.
+        # 그대로 두면 "Value for undeclared variable" 에러로 apply 자체가 실패한다.
