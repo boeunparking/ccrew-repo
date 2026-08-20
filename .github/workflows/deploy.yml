@@ -85,6 +85,8 @@ jobs:
             -target=module.batch_service.aws_ecs_service.tf_task_service \
             -target=module.web_service_tokyo.aws_ecs_task_definition.tf_task \
             -target=module.web_service_tokyo.aws_ecs_service.tf_task_service \
+            -target=module.admin_service.aws_ecs_task_definition.tf_task \
+            -target=module.admin_service.aws_ecs_service.tf_task_service \
             -var "image_tag_web=$IMAGE_TAG" \
             -var "image_tag_batch=$IMAGE_TAG" \
             -var "certificate_arn=${{ secrets.CERTIFICATE_ARN }}" \

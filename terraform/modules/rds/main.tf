@@ -91,6 +91,7 @@ resource "aws_db_instance" "primary" {
   allocated_storage = var.allocated_storage
   storage_type      = "gp3"
   storage_encrypted = true
+  kms_key_id        = var.kms_key_id # null이면 AWS 관리형 aws/rds 키 사용
 
   username = var.username
   password = random_password.db[0].result

@@ -51,6 +51,21 @@ resource "aws_iam_role_policy_attachment" "ecs_task_secrets" {
   policy_arn = "arn:aws:iam::aws:policy/AWSSecretsManagerClientReadOnlyAccess"
 }
 
+# S3 source 버킷이 이제 고객관리형 KMS 키(aws_kms_key.seoul)로 암호화되므로,
+# presign PUT 서명(uploadRoutes.js)이 실제로 통하려면 s3:PutObject 권한만으로는
+# 부족하고 이 키에 대한 kms:GenerateDataKey/Decrypt도 별도로 있어야 한다.
+data "aws_iam_policy_document" "ecs_task_kms" {
+  statement {
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey*"]
+    resources = [aws_kms_key.seoul.arn]
+  }
+}
+resource "aws_iam_role_policy" "ecs_task_kms" {
+  name   = "ecs-task-kms-seoul"
+  role   = module.ecs_task.iam_role_name
+  policy = data.aws_iam_policy_document.ecs_task_kms.json
+}
+
 # Lambda Execution Role - Lambda 함수가 CloudWatch Logs에 로그 남기기 위한 기본 권한
 module "lambda_execution" {
   source  = "./modules/iam_role"
@@ -190,6 +205,9 @@ module "web_service" {
   environment = [
     { name = "ENV", value = "production" },
     { name = "UPLOAD_BUCKET", value = module.s3.source_bucket_name },
+    # 앱 코드는 REDIS_URL이라는 이름을 읽지만 실제 엔진은 Valkey(Redis 프로토콜 호환)다.
+    # transit_encryption_enabled=true라서 TLS 스킴(rediss://)이 필수.
+    { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
   ]
 
   desired_count                 = 2
@@ -234,6 +252,9 @@ module "web_service_tokyo" {
     # 같은 서울 source 버킷을 그대로 씀 - CRR 대상(도쿄) 버킷은 복제 전용 읽기 사본이라
     # 새 업로드를 직접 받는 용도로는 안 씀 (양쪽에 쓰면 복제 방향이 꼬임)
     { name = "UPLOAD_BUCKET", value = module.s3.source_bucket_name },
+    # 서울 Valkey를 넘어다니지 않고 도쿄 자체 Valkey를 쓴다 - failover 중에
+    # 서울이 죽어도 도쿄가 서울 캐시에 의존하지 않도록.
+    { name = "REDIS_URL", value = "rediss://${module.cache_tokyo.primary_endpoint}:6379" },
   ]
 
   desired_count                 = 2
@@ -254,6 +275,11 @@ module "web_service_tokyo" {
   depends_on = [aws_ecr_replication_configuration.this]
 }
 
+# 백그라운드 워커 (FARGATE_SPOT) — HTTP 서버가 아니라 상시 폴링 루프 프로세스.
+# 하는 일 2가지: (1) 마감된 경매 낙찰자에게 SES로 메일 발송 (2) 인기 상품 통계 스냅샷 갱신.
+# 둘 다 Valkey를 web 서비스와의 공유 상태 저장소로 쓴다 (auctions:open 소트셋,
+# auction:{id}:leader 해시, auction:popularity 소트셋 — web/src/routes에서 채움).
+# 워커가 여러 대 떠도 ZREM의 원자성으로 같은 경매를 두 번 알림 보내지 않는다 (worker.js 참고).
 module "batch_service" {
   source = "./modules/ecs_service"
 
@@ -263,11 +289,13 @@ module "batch_service" {
   ecr_repository_url = aws_ecr_repository.tf_batch_ecr.repository_url
   image_tag          = var.image_tag_batch
   execution_role_arn = module.ecs_execution.iam_role_arn
-  task_role_arn      = module.ecs_task.iam_role_arn
+  task_role_arn      = module.worker_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.batch.name
 
   environment = [
-    { name = "QUEUE_NAME", value = "batch-jobs" }
+    { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
+    { name = "SES_FROM_ADDRESS", value = var.ses_from_address },
+    { name = "POLL_INTERVAL_SECONDS", value = "30" },
   ]
 
   desired_count     = 3

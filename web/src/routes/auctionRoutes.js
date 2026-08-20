@@ -9,6 +9,7 @@ import {
   toImagePath,
 } from "../store.js";
 import { requireAuth } from "../authMiddleware.js";
+import { getRedisClient } from "../redisClient.js";
 
 const router = Router();
 
@@ -81,7 +82,7 @@ router.get("/:id/related", (req, res) => {
 
 // AuctionCreate.jsx
 // 이미지는 /uploads/presign으로 S3에 직접 올린 뒤 그 key를 images에 넣어 보낸다
-router.post("/", requireAuth, (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   const {
     name,
     startPrice,
@@ -125,6 +126,16 @@ router.post("/", requireAuth, (req, res) => {
 
   auctions.set(auction.id, auction);
   bids.set(auction.id, []);
+
+  // 워커(batch)가 마감된 경매를 찾을 수 있게 Valkey에도 등록한다.
+  // web 태스크의 in-process auctions Map은 다른 프로세스(워커)에서 안 보인다.
+  const redis = await getRedisClient();
+  if (redis) {
+    await Promise.all([
+      redis.zAdd("auctions:open", { score: endsAt.getTime(), value: auction.id }),
+      redis.hSet(`auction:${auction.id}:meta`, { name: auction.name }),
+    ]);
+  }
 
   res.status(201).json({ id: auction.id });
 });

@@ -102,6 +102,13 @@ data "aws_iam_policy_document" "image_moderation_permissions" {
     resources = ["${module.s3.source_bucket_arn}/auctions/*"]
   }
 
+  # source 버킷이 고객관리형 키(aws_kms_key.seoul)로 암호화되므로, Rekognition이
+  # 이 Lambda의 자격으로 S3 이미지를 읽을 때 kms:Decrypt가 없으면 실패한다.
+  statement {
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.seoul.arn]
+  }
+
   statement {
     actions   = ["rekognition:DetectModerationLabels"]
     resources = ["*"] # Rekognition은 리소스 레벨 권한을 지원하지 않음
