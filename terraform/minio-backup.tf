@@ -49,7 +49,8 @@ resource "aws_ssm_association" "minio_pii_backup" {
       "mountpoint -q /data || mount /data",
       "",
       "# --- 2) MinIO 설치 ---",
-      "dnf install -y jq mariadb105 || dnf install -y jq mysql",
+      "dnf install -y jq mariadb105 cronie || dnf install -y jq mysql cronie",
+      "systemctl enable --now crond",
       "if ! id minio-user > /dev/null 2>&1; then useradd -r minio-user; fi",
       "mkdir -p /data/minio/backup/pii",
       "chown -R minio-user:minio-user /data/minio",
@@ -105,6 +106,7 @@ resource "aws_ssm_association" "minio_pii_backup" {
       "SCRIPT",
       "chmod +x /usr/local/bin/pii-backup.sh",
       "",
+      "mkdir -p /etc/cron.d",
       "echo '0 18 * * * root /usr/local/bin/pii-backup.sh >> /var/log/pii-backup.log 2>&1' > /etc/cron.d/pii-backup",
     ])
   }

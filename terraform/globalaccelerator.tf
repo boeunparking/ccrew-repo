@@ -33,11 +33,11 @@ resource "aws_globalaccelerator_endpoint_group" "seoul" {
 
   traffic_dial_percentage = 100 # 현재는 100% 서울로
 
-  health_check_protocol = "HTTPS"
-  health_check_port     = 443
-  health_check_path     = "/health"
+  health_check_protocol         = "HTTPS"
+  health_check_port             = 443
+  health_check_path             = "/health"
   health_check_interval_seconds = 10
-  threshold_count        = 3
+  threshold_count               = 3
 
   endpoint_configuration {
     endpoint_id                    = module.alb.alb_arn

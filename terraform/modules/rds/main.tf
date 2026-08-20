@@ -74,11 +74,11 @@ resource "aws_secretsmanager_secret_version" "db" {
 resource "aws_db_instance" "primary" {
   count = var.create_primary ? 1 : 0
 
-  identifier     = "${var.project}-${var.name}-primary"
-  availability_zone  = var.primary_availability_zone  #추가
-  engine         = "mysql"
-  engine_version = var.engine_version
-  instance_class = var.instance_class
+  identifier        = "${var.project}-${var.name}-primary"
+  availability_zone = var.primary_availability_zone #추가
+  engine            = "mysql"
+  engine_version    = var.engine_version
+  instance_class    = var.instance_class
 
   allocated_storage = var.allocated_storage
   storage_type      = "gp3"
@@ -113,7 +113,7 @@ resource "aws_db_instance" "replica" {
   count = var.create_replica && var.create_primary ? 1 : 0
 
   identifier          = "${var.project}-${var.name}-replica"
-  availability_zone    = var.replica_availability_zone  # 추가
+  availability_zone   = var.replica_availability_zone # 추가
   replicate_source_db = aws_db_instance.primary[0].identifier
   instance_class      = var.instance_class
 
@@ -130,8 +130,8 @@ resource "aws_db_instance" "replica" {
 # (도쿄 warm standby에서 create_primary=false 로 사용)
 ########################################
 resource "aws_db_instance" "cross_region_replica" {
-  count = var.create_cross_region_replica ? 1 : 0
-  kms_key_id           = var.kms_key_id
+  count      = var.create_cross_region_replica ? 1 : 0
+  kms_key_id = var.kms_key_id
 
   identifier          = "${var.project}-${var.name}-replica"
   replicate_source_db = var.replicate_source_db # 소스 DB의 ARN
