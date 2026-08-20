@@ -9,14 +9,14 @@ data "aws_route53_zone" "cloudduck" {
 
 # API 서브도메인 -> Global Accelerator 로 alias 연결
 # 예: api.cloudduck.cloud
-resource "aws_route53_record" "api" {
-  zone_id = data.aws_route53_zone.cloudduck.zone_id
-  name    = "api.cloudduck.cloud"
-  type    = "A"
+# resource "aws_route53_record" "api" {
+#   zone_id = data.aws_route53_zone.cloudduck.zone_id
+#   name    = "api.cloudduck.cloud"
+#   type    = "A"
 
-  alias {
-    name                   = aws_globalaccelerator_accelerator.api.dns_name
-    zone_id                = aws_globalaccelerator_accelerator.api.hosted_zone_id
-    evaluate_target_health = false
-  }
-}
+#   alias {
+#     name                   = aws_globalaccelerator_accelerator.api.dns_name
+#     zone_id                = aws_globalaccelerator_accelerator.api.hosted_zone_id
+#     evaluate_target_health = false
+#   }
+# }

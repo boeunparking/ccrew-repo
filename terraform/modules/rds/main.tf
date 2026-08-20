@@ -54,7 +54,7 @@ resource "aws_secretsmanager_secret" "db" {
   count                   = var.create_primary ? 1 : 0
   name                    = "${var.project}/${var.name}/rds/admin"
   description             = "RDS MySQL admin password - managed by hayoon"
-  recovery_window_in_days = 7
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "db" {
@@ -145,3 +145,5 @@ resource "aws_db_instance" "cross_region_replica" {
 
   tags = { Name = "${var.project}-${var.name}-rds-replica" }
 }
+
+
