@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  auctions, bids, claims, securityLogs, suspiciousBids, secondsLeft, isEnded,
+  listAuctions, countAllBids, claims, securityLogs, suspiciousBids, secondsLeft, isEnded,
 } from '../store.js';
 import { requireAuth, requireAdmin } from '../authMiddleware.js';
 import { connectionCount } from '../realtime.js';
@@ -11,12 +11,9 @@ const router = Router();
 router.use(requireAuth, requireAdmin);
 
 // AdminDashboard.jsx 상단 통계 3종
-router.get('/stats', (_req, res) => {
-  let bidCount = 0;
-  for (const list of bids.values()) bidCount += list.length;
-
+router.get('/stats', async (_req, res) => {
   res.json({
-    bidCount,
+    bidCount: await countAllBids(),
     // 시뮬레이션이 아니라 실제 WebSocket 연결 수
     activeUsers: connectionCount(),
     suspiciousCount: suspiciousBids.length,
@@ -24,8 +21,9 @@ router.get('/stats', (_req, res) => {
 });
 
 // 실시간 경매 리스트
-router.get('/auctions', (_req, res) => {
-  const items = [...auctions.values()]
+router.get('/auctions', async (_req, res) => {
+  const auctions = await listAuctions();
+  const items = auctions
     .filter((a) => !isEnded(a))
     .sort((a, b) => secondsLeft(a) - secondsLeft(b))
     .map((a) => ({
