@@ -19,3 +19,8 @@ output "instance_id" {
 output "instance_private_ip" {
   value = aws_instance.app.private_ip
 }
+
+output "eip_public_ip" {
+  description = "Customer Gateway에 등록할 온프레미스(EC2)의 고정 공인 IP"
+  value       = aws_eip.app.public_ip
+}

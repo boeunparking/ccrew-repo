@@ -1,5 +1,5 @@
-image_tag_web   = "3"
-image_tag_batch = "3"
+image_tag_web   = "bootstrap"
+image_tag_batch = "bootstrap"
 certificate_arn = "arn:aws:acm:ap-northeast-2:033177021117:certificate/92a3fd3f-214c-48e7-ba9d-e5fa48c53ce4"
 # TODO: 도쿄(ap-northeast-1) 리전에 ACM 인증서를 별도로 발급/검증한 뒤 그 ARN으로 교체할 것.
 # ACM은 리전 단위 리소스라 서울 인증서를 재사용할 수 없음 — 아래 값은 placeholder이며 그대로 apply하면 실패함.

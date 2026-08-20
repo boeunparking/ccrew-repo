@@ -5,17 +5,24 @@
  * 헷갈리기 쉬운 짝: src/routes/authRoutes.js 는 실제 URL(/auth/login 등)을 정의한다.
  * 이 파일은 그 라우터를 포함한 모든 라우터가 공용으로 쓴다.
  */
-import jwt from 'jsonwebtoken';
+import jwt from "jsonwebtoken";
 
 // 프로덕션에서는 Secrets Manager가 주입한다. 로컬 기본값은 개발용.
-const SECRET = process.env.JWT_SECRET || 'dev-only-not-for-production';
-const EXPIRES_IN = '7d';
+
+const SECRET = process.env.JWT_SECRET || "dev-only-not-for-production";
+const EXPIRES_IN = "7d";
 
 export function signToken(user) {
   return jwt.sign(
-    { sub: user.id, email: user.email, nickname: user.nickname, role: user.role },
+    {
+      sub: user.id,
+      email: user.email,
+      nickname: user.nickname,
+      role: user.role,
+    },
     SECRET,
-    { expiresIn: EXPIRES_IN }
+
+    { expiresIn: EXPIRES_IN },
   );
 }
 
@@ -25,19 +32,21 @@ export function verifyToken(token) {
 
 function readToken(req) {
   const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) return null;
+  if (!header?.startsWith("Bearer ")) return null;
   return header.slice(7);
 }
 
 // 로그인 필수 구간
 export function requireAuth(req, res, next) {
   const token = readToken(req);
-  if (!token) return res.status(401).json({ error: '로그인이 필요합니다' });
+  if (!token) return res.status(401).json({ error: "로그인이 필요합니다" });
   try {
     req.user = verifyToken(token);
     next();
   } catch {
-    res.status(401).json({ error: '세션이 만료되었습니다. 다시 로그인해 주세요' });
+    res
+      .status(401)
+      .json({ error: "세션이 만료되었습니다. 다시 로그인해 주세요" });
   }
 }
 
@@ -55,8 +64,8 @@ export function optionalAuth(req, _res, next) {
 }
 
 export function requireAdmin(req, res, next) {
-  if (req.user?.role !== 'admin') {
-    return res.status(403).json({ error: '관리자만 접근할 수 있습니다' });
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ error: "관리자만 접근할 수 있습니다" });
   }
   next();
 }
