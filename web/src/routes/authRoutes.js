@@ -9,7 +9,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { users } from "../store.js";
+import { findUserByEmail, createUser } from "../store.js";
 import { signToken, requireAuth } from "../authMiddleware.js";
 
 const router = Router();
@@ -27,7 +27,7 @@ router.post("/signup", async (req, res) => {
   if (password !== passwordConfirm) {
     return res.status(400).json({ error: "비밀번호가 서로 다릅니다" });
   }
-  if (users.has(email)) {
+  if (await findUserByEmail(email)) {
     return res.status(409).json({ error: "이미 가입된 이메일입니다" });
   }
 
@@ -38,7 +38,7 @@ router.post("/signup", async (req, res) => {
     nickname: email.split("@")[0],
     role: "user",
   };
-  users.set(email, user);
+  await createUser(user);
 
   res
     .status(201)
@@ -48,7 +48,7 @@ router.post("/signup", async (req, res) => {
 // Login.jsx: { email, password }
 router.post("/login", async (req, res) => {
   const { email, password } = req.body ?? {};
-  const user = users.get(email);
+  const user = await findUserByEmail(email);
 
   // 계정 존재 여부를 노출하지 않도록 같은 메시지를 쓴다
   const fail = () =>

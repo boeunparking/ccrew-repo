@@ -25,3 +25,9 @@ output "db_sg_id" {
 output "secret_arn" {
   value = try(aws_secretsmanager_secret.db[0].arn, null)
 }
+
+output "primary_password" {
+  description = "Primary DB 비밀번호 (크로스 리전 replica 쪽 Secrets Manager 시크릿 생성 시 전달용)"
+  value       = try(random_password.db[0].result, null)
+  sensitive   = true
+}

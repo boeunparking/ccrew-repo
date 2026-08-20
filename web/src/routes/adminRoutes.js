@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import {
-  auctions, bids, claims, securityLogs, suspiciousBids, secondsLeft, isEnded,
+  listAuctions, countAllBids, claims, securityLogs, suspiciousBids, secondsLeft, isEnded,
 } from '../store.js';
 import { requireAuth, requireAdmin } from '../authMiddleware.js';
 import { connectionCount } from '../realtime.js';
+import redis from '../valkey.js';
 
 const router = Router();
 
@@ -11,12 +12,9 @@ const router = Router();
 router.use(requireAuth, requireAdmin);
 
 // AdminDashboard.jsx 상단 통계 3종
-router.get('/stats', (_req, res) => {
-  let bidCount = 0;
-  for (const list of bids.values()) bidCount += list.length;
-
+router.get('/stats', async (_req, res) => {
   res.json({
-    bidCount,
+    bidCount: await countAllBids(),
     // 시뮬레이션이 아니라 실제 WebSocket 연결 수
     activeUsers: connectionCount(),
     suspiciousCount: suspiciousBids.length,
@@ -24,8 +22,9 @@ router.get('/stats', (_req, res) => {
 });
 
 // 실시간 경매 리스트
-router.get('/auctions', (_req, res) => {
-  const items = [...auctions.values()]
+router.get('/auctions', async (_req, res) => {
+  const auctions = await listAuctions();
+  const items = auctions
     .filter((a) => !isEnded(a))
     .sort((a, b) => secondsLeft(a) - secondsLeft(b))
     .map((a) => ({
@@ -36,6 +35,14 @@ router.get('/auctions', (_req, res) => {
     }));
 
   res.json({ items });
+});
+
+// 인기 상품 통계 — worker(batch)가 주기적으로(POLL_INTERVAL_SECONDS) 미리 구워둔 스냅샷을
+// 그대로 읽기만 한다. 여기서 직접 집계하지 않는 이유: 실시간성이 필요 없는 통계라서
+// 요청마다 계산하기보단 Fargate Spot 워커가 비동기로 미리 만들어두는 게 더 싸다.
+router.get('/stats/popular', async (_req, res) => {
+  const raw = await redis.get('stats:popular:snapshot');
+  res.json(raw ? JSON.parse(raw) : { items: [], updatedAt: null });
 });
 
 router.get('/suspicious', (_req, res) => res.json({ items: suspiciousBids }));

@@ -46,6 +46,6 @@ resource "aws_vpn_connection" "this" {
 }
 
 resource "aws_vpn_connection_route" "onprem" {
-  vpn_connection_id     = aws_vpn_connection.this.id
+  vpn_connection_id      = aws_vpn_connection.this.id
   destination_cidr_block = var.onprem_cidr
 }

@@ -35,8 +35,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "source" {
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = var.source_kms_key_id # null이면 AWS 관리형 aws/s3 키 사용
     }
+    bucket_key_enabled = var.source_kms_key_id != null
   }
 }
 
@@ -48,6 +50,14 @@ resource "aws_s3_bucket_public_access_block" "source" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# 버킷의 모든 객체 이벤트(생성/삭제 등)를 서울 리전 기본 EventBridge 버스로 보낸다.
+# 이미지 모더레이션 파이프라인(EventBridge → SQS → Lambda → Rekognition)의 시작점.
+resource "aws_s3_bucket_notification" "source_eventbridge" {
+  provider    = aws.source
+  bucket      = aws_s3_bucket.source.id
+  eventbridge = true
 }
 
 ########################################
