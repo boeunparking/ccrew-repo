@@ -4,6 +4,7 @@ import {
 } from '../store.js';
 import { requireAuth, requireAdmin } from '../authMiddleware.js';
 import { connectionCount } from '../realtime.js';
+import { getRedisClient } from '../redisClient.js';
 
 const router = Router();
 
@@ -36,6 +37,17 @@ router.get('/auctions', (_req, res) => {
     }));
 
   res.json({ items });
+});
+
+// 인기 상품 통계 — worker(batch)가 주기적으로(POLL_INTERVAL_SECONDS) 미리 구워둔 스냅샷을
+// 그대로 읽기만 한다. 여기서 직접 집계하지 않는 이유: 실시간성이 필요 없는 통계라서
+// 요청마다 계산하기보단 Fargate Spot 워커가 비동기로 미리 만들어두는 게 더 싸다.
+router.get('/stats/popular', async (_req, res) => {
+  const redis = await getRedisClient();
+  if (!redis) return res.json({ items: [], updatedAt: null });
+
+  const raw = await redis.get('stats:popular:snapshot');
+  res.json(raw ? JSON.parse(raw) : { items: [], updatedAt: null });
 });
 
 router.get('/suspicious', (_req, res) => res.json({ items: suspiciousBids }));

@@ -100,3 +100,26 @@ variable "kms_key_id" {
   type    = string
   default = null
 }
+
+########################################
+# replica 전용 모드(create_primary=false)에서도 Secrets Manager 시크릿이 필요할 때 사용
+# (예: 도쿄 크로스 리전 replica — 소스 DB와 계정정보는 동일, host만 이 리전 엔드포인트로 저장)
+########################################
+variable "create_secret" {
+  description = "true면 create_primary=false여도 Secrets Manager 시크릿을 생성한다"
+  type        = bool
+  default     = false
+}
+
+variable "secret_username" {
+  description = "create_secret=true, create_primary=false일 때 저장할 username (소스 DB와 동일해야 함)"
+  type        = string
+  default     = null
+}
+
+variable "secret_password" {
+  description = "create_secret=true, create_primary=false일 때 저장할 password (소스 DB에서 전달받음)"
+  type        = string
+  default     = null
+  sensitive   = true
+}

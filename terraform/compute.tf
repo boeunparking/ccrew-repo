@@ -15,6 +15,13 @@ variable "certificate_arn" {
   description = "ALB HTTPS 리스너에 사용할 ACM 인증서 ARN"
 }
 
+variable "certificate_arn_tokyo" {
+  type        = string
+  description = "도쿄 ALB HTTPS 리스너에 사용할 ACM 인증서 ARN (ACM은 리전 단위 리소스라 도쿄 리전에 별도 발급 필요)"
+}
+
+data "aws_caller_identity" "current" {}
+
 
 ### IAM Role ###
 
@@ -44,6 +51,21 @@ resource "aws_iam_role_policy_attachment" "ecs_task_secrets" {
   policy_arn = "arn:aws:iam::aws:policy/AWSSecretsManagerClientReadOnlyAccess"
 }
 
+# S3 source 버킷이 이제 고객관리형 KMS 키(aws_kms_key.seoul)로 암호화되므로,
+# presign PUT 서명(uploadRoutes.js)이 실제로 통하려면 s3:PutObject 권한만으로는
+# 부족하고 이 키에 대한 kms:GenerateDataKey/Decrypt도 별도로 있어야 한다.
+data "aws_iam_policy_document" "ecs_task_kms" {
+  statement {
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey*"]
+    resources = [aws_kms_key.seoul.arn]
+  }
+}
+resource "aws_iam_role_policy" "ecs_task_kms" {
+  name   = "ecs-task-kms-seoul"
+  role   = module.ecs_task.iam_role_name
+  policy = data.aws_iam_policy_document.ecs_task_kms.json
+}
+
 # Lambda Execution Role - Lambda 함수가 CloudWatch Logs에 로그 남기기 위한 기본 권한
 module "lambda_execution" {
   source  = "./modules/iam_role"
@@ -71,14 +93,44 @@ module "alb" {
   certificate_arn   = var.certificate_arn
 }
 
+# 도쿄(Warm Standby) ALB — vpc_id / security_group_id / subnet_ids는 region_stack(module.tokyo) 출력값으로 연결
+module "alb_tokyo" {
+  source = "./modules/load_balancer"
+  providers = {
+    aws = aws.tokyo
+  }
+
+  vpc_id            = module.tokyo.vpc_id
+  security_group_id = module.tokyo.alb_sg_id
+  subnet_ids        = [module.tokyo.subnet_ids["pub-sn1"], module.tokyo.subnet_ids["pub-sn2"]]
+  certificate_arn   = var.certificate_arn_tokyo
+}
+
 
 ### ECR ###
+# ECR은 리전 단위 리소스라 도쿄에는 저장소를 새로 만들지 않고,
+# 계정 단위 복제 설정으로 서울 저장소의 이미지를 도쿄 레지스트리로 그대로 복제한다.
 
 resource "aws_ecr_repository" "tf_web_ecr" {
   name = "tf-web-ecr"
 }
 resource "aws_ecr_repository" "tf_batch_ecr" {
   name = "tf-batch-ecr"
+}
+
+resource "aws_ecr_replication_configuration" "this" {
+  replication_configuration {
+    rule {
+      destination {
+        region      = var.region_tokyo
+        registry_id = data.aws_caller_identity.current.account_id
+      }
+      repository_filter {
+        filter      = "tf-"
+        filter_type = "PREFIX_MATCH"
+      }
+    }
+  }
 }
 
 
@@ -93,6 +145,12 @@ resource "aws_cloudwatch_log_group" "batch" {
   retention_in_days = 1 # 1일 지난 로그는 자동 삭제
 }
 
+resource "aws_cloudwatch_log_group" "web_tokyo" {
+  provider          = aws.tokyo
+  name              = "/aws/ecs/web-tokyo"
+  retention_in_days = 1
+}
+
 
 ### ECS Cluster ###
 
@@ -102,6 +160,24 @@ resource "aws_ecs_cluster" "tf_cluster" {
 
 resource "aws_ecs_cluster_capacity_providers" "tf_ccp" {
   cluster_name       = aws_ecs_cluster.tf_cluster.name
+  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
+
+  default_capacity_provider_strategy {
+    base              = 1
+    weight            = 100
+    capacity_provider = "FARGATE"
+  }
+}
+
+# 도쿄(Warm Standby) ECS 클러스터 — ECS 클러스터는 리전 단위 리소스라 별도로 생성
+resource "aws_ecs_cluster" "tf_cluster_tokyo" {
+  provider = aws.tokyo
+  name     = "tf-cluster-tokyo"
+}
+
+resource "aws_ecs_cluster_capacity_providers" "tf_ccp_tokyo" {
+  provider           = aws.tokyo
+  cluster_name       = aws_ecs_cluster.tf_cluster_tokyo.name
   capacity_providers = ["FARGATE", "FARGATE_SPOT"]
 
   default_capacity_provider_strategy {
@@ -127,7 +203,11 @@ module "web_service" {
 
   container_port = 3000
   environment = [
-    { name = "ENV", value = "production" }
+    { name = "ENV", value = "production" },
+    { name = "UPLOAD_BUCKET", value = module.s3.source_bucket_name },
+    # 앱 코드는 REDIS_URL이라는 이름을 읽지만 실제 엔진은 Valkey(Redis 프로토콜 호환)다.
+    # transit_encryption_enabled=true라서 TLS 스킴(rediss://)이 필수.
+    { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
   ]
 
   desired_count                 = 2
@@ -145,6 +225,61 @@ module "web_service" {
   autoscaling_cpu_target   = 60
 }
 
+# 도쿄(Warm Standby) 웹 서비스 — 이미지는 aws_ecr_replication_configuration이 복제한
+# 도쿄 리전 레지스트리(같은 저장소 이름/태그)에서 pull한다.
+# IAM Role은 글로벌 리소스라 서울과 동일한 role ARN을 그대로 사용한다.
+# Warm Standby: 구성도 기준 AZ(서브넷)당 1개씩 총 2개 태스크를 평상시에도 띄워두고,
+# 서울 장애로 failover 되면 CPU 60% 타겟 오토스케일링이 트래픽에 맞춰 최대 10개까지 끌어올린다.
+module "web_service_tokyo" {
+  source = "./modules/ecs_service"
+  providers = {
+    aws = aws.tokyo
+  }
+
+  name               = "clduck-web-tokyo"
+  cluster_id         = aws_ecs_cluster.tf_cluster_tokyo.id
+  cluster_name       = aws_ecs_cluster.tf_cluster_tokyo.name
+  ecr_repository_url = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region_tokyo}.amazonaws.com/${aws_ecr_repository.tf_web_ecr.name}"
+  image_tag          = var.image_tag_web
+  execution_role_arn = module.ecs_execution.iam_role_arn
+  task_role_arn      = module.ecs_task.iam_role_arn
+  log_group          = aws_cloudwatch_log_group.web_tokyo.name
+  region             = var.region_tokyo
+
+  container_port = 3000
+  environment = [
+    { name = "ENV", value = "production" },
+    # 같은 서울 source 버킷을 그대로 씀 - CRR 대상(도쿄) 버킷은 복제 전용 읽기 사본이라
+    # 새 업로드를 직접 받는 용도로는 안 씀 (양쪽에 쓰면 복제 방향이 꼬임)
+    { name = "UPLOAD_BUCKET", value = module.s3.source_bucket_name },
+    # 서울 Valkey를 넘어다니지 않고 도쿄 자체 Valkey를 쓴다 - failover 중에
+    # 서울이 죽어도 도쿄가 서울 캐시에 의존하지 않도록.
+    { name = "REDIS_URL", value = "rediss://${module.cache_tokyo.primary_endpoint}:6379" },
+  ]
+
+  desired_count                 = 2
+  launch_type                   = "FARGATE"
+  capacity_providers_dependency = aws_ecs_cluster_capacity_providers.tf_ccp_tokyo
+
+  target_group_arn = module.alb_tokyo.alb_tg_arn
+
+  subnets         = [module.tokyo.subnet_ids["pri-sn3"], module.tokyo.subnet_ids["pri-sn4"]]
+  security_groups = [module.tokyo.ecs_sg_id]
+
+  enable_autoscaling       = true
+  autoscaling_min_capacity = 2
+  autoscaling_max_capacity = 10
+  autoscaling_cpu_target   = 60
+
+  # 태스크가 뜨기 전에 서울 이미지가 도쿄 레지스트리로 복제되어 있어야 한다
+  depends_on = [aws_ecr_replication_configuration.this]
+}
+
+# 백그라운드 워커 (FARGATE_SPOT) — HTTP 서버가 아니라 상시 폴링 루프 프로세스.
+# 하는 일 2가지: (1) 마감된 경매 낙찰자에게 SES로 메일 발송 (2) 인기 상품 통계 스냅샷 갱신.
+# 둘 다 Valkey를 web 서비스와의 공유 상태 저장소로 쓴다 (auctions:open 소트셋,
+# auction:{id}:leader 해시, auction:popularity 소트셋 — web/src/routes에서 채움).
+# 워커가 여러 대 떠도 ZREM의 원자성으로 같은 경매를 두 번 알림 보내지 않는다 (worker.js 참고).
 module "batch_service" {
   source = "./modules/ecs_service"
 
@@ -154,11 +289,13 @@ module "batch_service" {
   ecr_repository_url = aws_ecr_repository.tf_batch_ecr.repository_url
   image_tag          = var.image_tag_batch
   execution_role_arn = module.ecs_execution.iam_role_arn
-  task_role_arn      = module.ecs_task.iam_role_arn
+  task_role_arn      = module.worker_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.batch.name
 
   environment = [
-    { name = "QUEUE_NAME", value = "batch-jobs" }
+    { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
+    { name = "SES_FROM_ADDRESS", value = var.ses_from_address },
+    { name = "POLL_INTERVAL_SECONDS", value = "30" },
   ]
 
   desired_count     = 3

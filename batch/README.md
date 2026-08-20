@@ -1,78 +1,50 @@
-# ccrew-backend
+# clduck-worker
 
-CloudDuck 경매 API 서버. **서브도메인 기반**으로 동작한다.
+CloudDuck 백그라운드 워커. HTTP 서버가 아니라 `worker.js`가 상시 폴링 루프로 돈다.
+`web/`과 완전히 같은 API 서버였던 예전 코드는 실제로 아무 것도 소비하지 않는 죽은 배포였어서
+전부 걷어내고 이걸로 교체했다.
 
-- API: `https://api.cloudduck.cloud`
-- 프론트: `https://cloudduck.cloud` (별도 오리진)
+## 하는 일
 
-예전에는 CloudFront 한 도메인에서 `/api/*` 경로를 ALB로 넘기는 경로 기반이었다.
-지금은 호스트 자체가 API를 뜻하므로 **`/api` 접두사가 없다.**
+1. **낙찰 알림** — `POLL_INTERVAL_SECONDS`마다 Valkey의 `auctions:open` 소트셋에서 마감시간이
+   지난 경매를 찾아, 그 경매의 최고 입찰자(`auction:{id}:leader` 해시)에게 SES로 낙찰 메일을 보낸다.
+2. **인기 상품 통계** — 같은 주기로 `auction:popularity` 소트셋(입찰마다 web이 `ZINCRBY`)에서
+   상위 10개를 뽑아 `stats:popular:snapshot` 키에 JSON으로 캐싱한다.
+   `GET /admin/stats/popular`(web의 admin 라우터)이 이 값을 그대로 읽어서 응답한다.
 
-| 예전 (경로 기반)                        | 지금 (서브도메인 기반)                       |
-| --------------------------------------- | -------------------------------------------- |
-| `https://cloudduck.cloud/api/auth/login` | `https://api.cloudduck.cloud/auth/login`      |
-| `https://cloudduck.cloud/api/auctions`   | `https://api.cloudduck.cloud/auctions`        |
-| `wss://cloudduck.cloud/ws`               | `wss://api.cloudduck.cloud/ws`                |
+## 왜 워커가 여러 대 떠도 안전한가
 
-옛 경로로 부르면 404와 함께 바꿔야 할 경로를 알려준다.
+`desired_count`가 1보다 커도(Fargate Spot 회수 대비 이중화) 낙찰 메일이 중복 발송되지 않는다.
+`auctions:open`에서 후보를 꺼낸 뒤 `ZREM`으로 "이 경매를 내가 처리한다"는 걸 원자적으로
+클레임하기 때문에, 여러 워커가 동시에 같은 경매를 집어도 `ZREM`이 1을 돌려주는 쪽만 실제로
+처리하고 나머지는 건너뛴다.
 
-## 엔드포인트
+## 필요한 상태 (web이 채워줌)
 
-```
-GET  /health                 ALB 헬스체크 (인증·호스트 검사 없음)
-GET  /ping                   배포 확인용
-
-POST /auth/signup
-POST /auth/login
-GET  /auth/me
-
-GET  /auctions               ?status=&cat=&sort=
-GET  /auctions/:id
-GET  /auctions/:id/related
-POST /auctions               (인증)
-POST /auctions/:id/bids      (인증)
-GET  /auctions/:id/bids
-GET  /bids/me                (인증)
-
-GET  /me/sales | /me/purchases | /me/notifications   (인증)
-GET  /admin/stats | /admin/auctions | /admin/suspicious | /admin/logs | /admin/claims  (인증)
-PATCH /admin/claims/:id      (인증)
-
-POST /uploads/presign        (인증) S3 직접 업로드용 서명 URL 발급
-WS   /ws?auctionId=:id       실시간 입찰
-```
+| 키 | 타입 | 채우는 곳 |
+| --- | --- | --- |
+| `auctions:open` | ZSET (auctionId → endsAt ms) | `auctionRoutes.js` POST `/auctions` |
+| `auction:{id}:meta` | HASH (name) | `auctionRoutes.js` POST `/auctions` |
+| `auction:{id}:leader` | HASH (userId, nickname, email, price) | `bidRoutes.js` 입찰 성공 시 |
+| `auction:popularity` | ZSET (auctionId → 입찰 횟수) | `bidRoutes.js` 입찰 성공 시 |
 
 ## 환경변수
 
-| 이름                | 기본값                                                          | 설명                                                                                                    |
-| ------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `API_HOST`          | `api.cloudduck.cloud`                                            | 이 API가 응답할 호스트. 콤마로 여러 개 가능                                                             |
-| `ENFORCE_API_HOST`  | 프로덕션이면 `true`                                              | Host 헤더 검사. ALB DNS로 직접 디버깅할 땐 `false`                                                       |
-| `CORS_ORIGINS`      | `https://cloudduck.cloud,https://www.cloudduck.cloud,http://localhost:5173,http://127.0.0.1:5173` | 브라우저에서 이 API를 부를 수 있는 프론트 오리진. **스킴 포함 필수**                                     |
-| `ASSET_BASE_URL`    | (없음)                                                           | 업로드 이미지를 읽는 주소 앞부분. 없으면 상대경로                                                        |
-| `UPLOAD_BUCKET`     | (없음)                                                           | presign 대상 S3 버킷. 없으면 업로드 API가 503                                                            |
-| `AWS_REGION`        | `ap-northeast-2`                                                 | S3 리전                                                                                                  |
-| `REDIS_URL`         | (없음)                                                           | 없으면 WebSocket 브로드캐스트가 태스크 하나 안에서만 동작                                                |
-| `JWT_SECRET`        | `src/authMiddleware.js` 참고                                     | 토큰 서명 키                                                                                             |
-| `ADMIN_EMAIL`       | `admin@cloudduck.cloud`                                          | 데모 관리자 계정                                                                                         |
-| `ADMIN_PASSWORD`    | `admin1234`                                                      | 데모 관리자 비밀번호                                                                                     |
-| `PORT`              | `3000`                                                           | 리슨 포트                                                                                                |
-
-### 호스트가 갈라지면서 새로 필요해진 것
-
-1. **CORS** — 경로 기반일 땐 같은 출처라 필요 없었다. 이제 필수.
-2. **WebSocket Origin 검사** — WS 핸드셰이크에는 CORS가 적용되지 않아 직접 검사한다 (`src/realtime.js`).
-3. **S3 버킷 CORS** — 브라우저가 프론트 도메인에서 S3로 직접 PUT 하므로 버킷 CORS에 `https://cloudduck.cloud` 의 `PUT` 허용이 필요하다.
+| 이름 | 기본값 | 설명 |
+| --- | --- | --- |
+| `REDIS_URL` | (없음) | 없으면 매 틱을 건너뛴다 (경고 로그만 남김) |
+| `SES_FROM_ADDRESS` | `noreply@cloudduck.cloud` | 낙찰 메일 발신 주소 (SES 도메인 인증 필요) |
+| `POLL_INTERVAL_SECONDS` | `30` | 폴링 주기 |
+| `AWS_REGION` | `ap-northeast-2` | SES 리전 |
 
 ## 로컬 실행
 
 ```bash
 npm install
-node server.js          # http://localhost:3000, 호스트 검사 꺼짐
+REDIS_URL=redis://localhost:6379 node worker.js
 ```
-
-프론트는 `npm run dev` 로 5173에서 띄우면 기본 `CORS_ORIGINS` 에 이미 들어있어 그대로 붙는다.
 
 ## 배포
 
-GitHub Actions(`.github/workflows/deploy.yml`)가 `web/`, `batch/` 변경 시 이미지를 빌드해 ECR에 올리고, ECS 서비스를 커밋 SHA 태그로 재배포한다.
+GitHub Actions(`.github/workflows/deploy.yml`)가 `batch/` 변경 시 이미지를 빌드해 ECR에 올리고,
+ECS 서비스(`module.batch_service`, FARGATE_SPOT)를 커밋 SHA 태그로 재배포한다.
