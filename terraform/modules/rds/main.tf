@@ -61,7 +61,7 @@ resource "aws_secretsmanager_secret" "db" {
   count                   = local.create_secret_effective ? 1 : 0
   name                    = "${var.project}/${var.name}/rds/admin"
   description             = "RDS MySQL admin password - managed by hayoon"
-  recovery_window_in_days = 7
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "db" {

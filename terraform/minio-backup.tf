@@ -126,7 +126,7 @@ resource "random_password" "minio_root" {
 resource "aws_secretsmanager_secret" "minio_root" {
   name                    = "${var.project}/onprem/minio-root"
   description             = "MinIO root 계정 (PII 백업 콘솔 접근용)"
-  recovery_window_in_days = 7
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "minio_root" {

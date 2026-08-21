@@ -32,7 +32,7 @@ resource "aws_kms_alias" "seoul" {
 }
 
 ########################################
-# 1. RDS — 서울: Primary(2a) + 같은 리전 Replica(2c), Multi-AZ 미사용
+# 1. RDS — 서울: Primary(2a) + 같은 리전 Replica(2c), Multi-AZ
 ########################################
 module "rds_seoul" {
   source = "./modules/rds"
@@ -47,12 +47,10 @@ module "rds_seoul" {
   # VPN 관리자 → DB 3306 허용 (VPN 관리자 접근 매트릭스)
   vpn_client_cidr = var.vpn_client_cidr
 
-  create_primary            = true
-  multi_az                  = true # 프리티어 아님 - Multi-AZ 활성화
-  create_replica            = true # RDS replica (db.t4g.micro)
-  primary_availability_zone = "ap-northeast-2a"
-  replica_availability_zone = "ap-northeast-2c"
-  kms_key_id                = aws_kms_key.seoul.arn
+  create_primary = true
+  multi_az       = true # 프리티어 아님 - Multi-AZ 활성화
+  create_replica = true # RDS replica (db.t4g.micro)
+  kms_key_id     = aws_kms_key.seoul.arn
 }
 
 ########################################
@@ -255,3 +253,24 @@ resource "aws_kms_alias" "rds_tokyo" {
   target_key_id = aws_kms_key.rds_tokyo.key_id
 }
 
+########################################
+# WAF 서울, 도쿄
+# AWSManagedRulesCommonRuleSet: 범용 기본 방어 세트
+# AWSManagedRulesKnownBadInputsRuleSet: 잘 알려진 공격 차단
+# AWSManagedRulesAmazonIpReputationList: AWS 자체 수집한 악성 IP 차단
+# RateLimit: 같은 IP에서 5분간 2000건 넘게 요청하면 차단
+########################################
+module "waf_seoul" {
+  source  = "./modules/waf"
+  project = var.project
+  name    = "seoul"
+  alb_arn = module.alb.alb_arn
+}
+
+module "waf_tokyo" {
+  source    = "./modules/waf"
+  providers = { aws = aws.tokyo } # WAFv2도 리전 리소스라 provider 지정 필요
+  project   = var.project
+  name      = "tokyo"
+  alb_arn   = module.alb_tokyo.alb_arn
+}
