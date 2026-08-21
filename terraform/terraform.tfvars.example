@@ -1,0 +1,46 @@
+# 실제 값으로 바꾼 뒤 terraform.tfvars 로 복사해서 사용한다.
+#
+# 예전 버전과 달리 VPC/서브넷/보안그룹/라우트테이블 ID는 여기 넣지 않는다 —
+# 이 스택이 직접 만들기 때문이다(terraform/main.tf의 module "seoul" / "tokyo").
+# 아래 7개만 채우면 되고, 나머지는 전부 variables.tf의 기본값을 쓴다.
+
+# ---- 컨테이너 이미지 태그 ----
+# CI(.github/workflows/deploy.yml)가 이미지를 빌드할 때 커밋 SHA를 태그로 붙이고,
+# apply 시 -var 로 이 값을 덮어쓴다. 로컬에서 apply할 때는 ECR에 실제로 존재하는
+# 태그를 넣어야 한다 — 없는 태그를 넣으면 ECS가 이미지를 못 받아 태스크가 계속 죽는다.
+#   확인: aws ecr describe-images --repository-name tf-web-ecr --region ap-northeast-2
+image_tag_web   = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+image_tag_batch = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+
+# ---- ACM 인증서 (ALB HTTPS 리스너용) ----
+# ACM은 리전 단위 리소스라 서울 인증서를 도쿄에서 재사용할 수 없다. 각 리전에 따로 발급할 것.
+#   발급: aws acm request-certificate --domain-name <도메인> --validation-method DNS --region <리전>
+certificate_arn       = "arn:aws:acm:ap-northeast-2:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+certificate_arn_tokyo = "arn:aws:acm:ap-northeast-1:123456789012:certificate/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
+
+# ---- Client VPN 인증서 ----
+# 서버 인증서: 반드시 "도메인이 있는" 인증서여야 한다.
+#   도메인 없는 인증서를 넣으면 "Certificate ... does not have a domain" 에러로 엔드포인트 생성이 실패한다.
+# 클라이언트 루트 인증서: easy-rsa로 만든 CA 인증서를 ACM에 import한 것.
+#   서버 인증서를 여기 그대로 재사용하면 안 된다(상호 인증이 성립하지 않음).
+vpn_server_cert_arn      = "arn:aws:acm:ap-northeast-2:123456789012:certificate/zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz"
+vpn_client_root_cert_arn = "arn:aws:acm:ap-northeast-2:123456789012:certificate/wwwwwwww-wwww-wwww-wwww-wwwwwwwwwwww"
+
+# ---- 알람 수신 ----
+# 최초 apply 후 이 주소로 SNS 구독 확인 메일이 오며, 승인해야 알람이 실제로 전달된다.
+alarm_email = "team@example.com"
+
+
+########################################
+# 아래는 기본값이 있어 생략 가능. 바꿔야 할 때만 주석을 푼다.
+########################################
+
+# 네트워크 (variables.tf 기본값)
+# vpc_cidr_seoul = "172.16.0.0/16"
+# vpc_cidr_tokyo = "172.17.0.0/16"
+
+# 온프레미스 VPC — 서울/도쿄/VPN 클라이언트 대역과 겹치지 않아야 한다
+# onprem_vpc_cidr = "10.0.0.0/16"
+
+# Client VPN 클라이언트 대역 — 위 세 VPC 대역과 겹치면 라우팅이 깨진다
+# vpn_client_cidr = "10.200.0.0/22"
