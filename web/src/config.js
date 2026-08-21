@@ -67,3 +67,25 @@ export function isAllowedOrigin(origin) {
  * 예: https://cdn.cloudduck.cloud
  */
 export const ASSET_BASE_URL = (process.env.ASSET_BASE_URL ?? '').replace(/\/+$/, '');
+
+/**
+ * 이 API가 밖에서 보이는 절대 주소.
+ *
+ * OAuth redirect_uri는 구글/카카오 콘솔에 등록한 문자열과 한 글자도 다르면 안 되는데,
+ * 요청의 Host 헤더로 만들면 ALB DNS나 헬스체크 호스트가 섞여 들어와서 어긋난다.
+ * 그래서 요청과 무관하게 설정으로 고정한다.
+ * 로컬 개발은 PUBLIC_API_BASE_URL=http://localhost:3000 으로 띄운다.
+ */
+export const PUBLIC_API_BASE_URL = (
+  process.env.PUBLIC_API_BASE_URL ?? `https://${API_HOSTS[0]}`
+).replace(/\/+$/, '');
+
+/**
+ * 소셜 로그인이 끝난 뒤 브라우저를 되돌려 보낼 프론트 주소.
+ * 기본값은 CORS 허용 목록의 첫 항목 — 운영 도메인이 거기 먼저 온다.
+ */
+export const FRONTEND_BASE_URL = (
+  process.env.FRONTEND_BASE_URL ??
+  ALLOWED_ORIGINS[0] ??
+  'https://cloudduck.cloud'
+).replace(/\/+$/, '');

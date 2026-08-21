@@ -4,6 +4,11 @@ const OPEN_AUCTIONS_KEY = 'auctions:open'; // ZSET: auctionId -> endsAt(ms)  (we
 const POPULARITY_KEY = 'auction:popularity'; // ZSET: auctionId -> 입찰 횟수 (web이 입찰마다 ZINCRBY)
 const POPULAR_SNAPSHOT_KEY = 'stats:popular:snapshot'; // 관리자 API(GET /admin/stats/popular)가 읽는 캐시
 
+// 소셜 로그인에서 이메일을 못 받은 계정에 붙는 자리표시자 도메인 (web/src/oauth.js).
+// MX 레코드가 없어서 보내면 100% 하드 바운스다 — SES는 바운스율 5%가 넘으면
+// 발송을 정지시키므로, 낙찰자가 이런 계정이면 아예 시도하지 않는다.
+const NO_EMAIL_DOMAIN = '@no-email.cloudduck.cloud';
+
 /**
  * 마감된 경매를 찾아 낙찰자에게 메일을 보낸다.
  *
@@ -25,6 +30,12 @@ export async function notifyEndedAuctions(redis) {
 
     if (!leader?.email) {
       console.log(`[worker] ${auctionId} 유찰 (입찰자 없음) — 메일 없음`);
+      continue;
+    }
+
+    if (leader.email.endsWith(NO_EMAIL_DOMAIN)) {
+      // 낙찰 자체는 유효하다. 알림 수단이 없을 뿐이라 앱 내 알림으로만 남는다.
+      console.log(`[worker] ${auctionId} 낙찰자에게 이메일이 없음 — 메일 건너뜀`);
       continue;
     }
 

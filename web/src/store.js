@@ -4,7 +4,7 @@
 // 지금은 전부 pool.query로 바뀌었고, 그래서 아래 함수들은 전부 async다 —
 // 호출하는 라우터 쪽에서 반드시 await를 붙여야 한다.
 //
-// claims/securityLogs/suspiciousBids/notifications는 아직 스키마(db/schema.sql)에
+// claims/securityLogs/suspiciousBids/notifications는 아직 스키마(src/schema.sql)에
 // 대응하는 테이블이 없어서 그대로 정적 목업으로 남겨뒀다 (관리자 대시보드 시연용).
 // 실제 데이터로 바꾸려면 별도 테이블 설계가 먼저 필요하다.
 
@@ -91,11 +91,49 @@ export async function upsertUser(user) {
   );
 }
 
+// password_hash는 null일 수 있다 — 소셜 로그인으로만 들어온 계정은 비밀번호가 없다.
 export async function createUser(user) {
   await pool.query(
     'INSERT INTO users (id, email, password_hash, nickname, role) VALUES (?, ?, ?, ?, ?)',
-    [user.id, user.email, user.passwordHash, user.nickname, user.role],
+    [user.id, user.email, user.passwordHash ?? null, user.nickname, user.role],
   );
+}
+
+// ========================================
+// user_identities — 소셜 계정 ↔ 우리 계정 연결
+// ========================================
+// 공급자가 주는 식별자(sub, id)는 이메일과 달리 바뀌지 않는다.
+// 그래서 "누구인가"는 항상 (provider, provider_user_id)로 판단하고,
+// 이메일은 기존 계정과 이어붙일지 정할 때만 참고한다.
+
+export async function findUserByIdentity(provider, providerUserId) {
+  const [rows] = await pool.query(
+    `SELECT u.* FROM user_identities i
+     JOIN users u ON u.id = i.user_id
+     WHERE i.provider = ? AND i.provider_user_id = ?`,
+    [provider, String(providerUserId)],
+  );
+  if (!rows[0]) return null;
+  return mapUserRow(rows[0]);
+}
+
+// 같은 사람이 두 브라우저에서 동시에 로그인하면 INSERT가 겹칠 수 있다.
+// UNIQUE 제약이 막아주므로, 중복이면 조용히 넘어가고 호출부가 다시 조회한다.
+export async function linkIdentity({ userId, provider, providerUserId, email }) {
+  await pool.query(
+    `INSERT IGNORE INTO user_identities (id, user_id, provider, provider_user_id, email)
+     VALUES (?, ?, ?, ?, ?)`,
+    [crypto.randomUUID(), userId, provider, String(providerUserId), email ?? null],
+  );
+}
+
+/** 마이페이지에서 "연결된 소셜 계정"을 보여줄 때 쓴다. */
+export async function listIdentities(userId) {
+  const [rows] = await pool.query(
+    'SELECT provider, email, created_at FROM user_identities WHERE user_id = ?',
+    [userId],
+  );
+  return rows.map((r) => ({ provider: r.provider, email: r.email, linkedAt: r.created_at }));
 }
 
 function mapUserRow(row) {

@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { createApp, state } from './src/app.js';
 import { attachRealtime } from './src/realtime.js';
 import { upsertUser } from './src/store.js';
+import { ensureSchema } from './src/schema.js';
 import pool from './src/db.js';
 
 const PORT = process.env.PORT || 3000;
@@ -19,6 +20,19 @@ attachRealtime(server);
  * 그러면 ALB가 아직 준비 안 된 태스크로는 트래픽을 보내지 않는다.
  */
 async function warmup() {
+  // 데이터베이스/테이블이 없으면 만든다. pool.query보다 반드시 먼저 와야 한다 —
+  // db.js의 풀은 cloud_duck 데이터베이스를 지정해서 접속하므로, 그게 없으면
+  // SELECT 1조차 커넥션 단계에서 실패한다.
+  //
+  // 도쿄(rds_tokyo_replica)는 읽기 전용이라 여기서 실패한다. 하지만 replica는
+  // 서울의 스키마를 복제로 받으므로 만들 필요 자체가 없다 — 경고만 남기고 넘어간다.
+  try {
+    await ensureSchema();
+    console.log('[init] 스키마 확인 완료');
+  } catch (e) {
+    console.warn('[init] 스키마 생성 건너뜀 (읽기 전용 DB일 수 있음) —', e.message);
+  }
+
   // RDS가 아직 안 떠 있으면 여기서 대기하게 된다 — /health가 계속 503을 반환해
   // ALB가 이 태스크로 트래픽을 안 보내므로 안전하다.
   await pool.query('SELECT 1');

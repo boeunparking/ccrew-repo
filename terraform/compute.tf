@@ -44,6 +44,9 @@ data "aws_iam_policy_document" "ecs_execution_read_db_secrets" {
     resources = [
       module.rds_seoul.secret_arn,
       module.rds_tokyo_replica.secret_arn,
+      # JWT 서명 키 + 소셜 로그인 client_secret (oauth.tf). 도쿄 복제본도 같이 열어준다.
+      local.app_auth_secret_arn_seoul,
+      local.app_auth_secret_arn_tokyo,
     ]
   }
 }
@@ -220,7 +223,7 @@ module "web_service" {
   log_group          = aws_cloudwatch_log_group.web.name
 
   container_port = 3000
-  environment = [
+  environment = concat([
     { name = "ENV", value = "production" },
     { name = "UPLOAD_BUCKET", value = module.s3.source_bucket_name },
     # 앱 코드는 REDIS_URL이라는 이름을 읽지만 실제 엔진은 Valkey(Redis 프로토콜 호환)다.
@@ -230,11 +233,11 @@ module "web_service" {
     { name = "DB_HOST", value = module.rds_seoul.db_address },
     { name = "DB_PORT", value = "3306" },
     { name = "DB_NAME", value = "cloud_duck" },
-  ]
-  secrets = [
+  ], local.web_oauth_environment)
+  secrets = concat([
     { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
-  ]
+  ], local.web_auth_secrets_seoul)
 
   desired_count                 = 2
   launch_type                   = "FARGATE"
@@ -273,7 +276,7 @@ module "web_service_tokyo" {
   region             = var.region_tokyo
 
   container_port = 3000
-  environment = [
+  environment = concat([
     { name = "ENV", value = "production" },
     # 같은 서울 source 버킷을 그대로 씀 - CRR 대상(도쿄) 버킷은 복제 전용 읽기 사본이라
     # 새 업로드를 직접 받는 용도로는 안 씀 (양쪽에 쓰면 복제 방향이 꼬임)
@@ -287,11 +290,13 @@ module "web_service_tokyo" {
     { name = "DB_HOST", value = module.rds_tokyo_replica.db_address },
     { name = "DB_PORT", value = "3306" },
     { name = "DB_NAME", value = "cloud_duck" },
-  ]
-  secrets = [
+  ], local.web_oauth_environment)
+  # 서울과 같은 JWT 키를 써야 failover 후에도 기존 토큰이 그대로 통한다.
+  # 다만 ARN은 도쿄 복제본을 가리켜야 한다 — ECS는 타 리전 시크릿을 못 읽는다.
+  secrets = concat([
     { name = "DB_USER", valueFrom = "${module.rds_tokyo_replica.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_tokyo_replica.secret_arn}:password::" },
-  ]
+  ], local.web_auth_secrets_tokyo)
 
   desired_count                 = 2
   launch_type                   = "FARGATE"

@@ -10,3 +10,11 @@ vpn_server_cert_arn = "arn:aws:acm:ap-northeast-2:033177021117:certificate/bb746
 # 아직 서버 인증서(3bc3bd19...)를 그대로 재사용 중이라 대기 상태 — CA 인증서 없이는 그대로 apply해도 실패함.
 vpn_client_root_cert_arn = "arn:aws:acm:ap-northeast-2:033177021117:certificate/3bc3bd19-7448-474a-959a-4aeb8f0caa1e"
 alarm_email              = "ccrewduck@gmail.com"
+
+# ---- 소셜 로그인 (oauth.tf) ----
+# 이 두 개는 인가 URL에 실려 브라우저로 나가는 공개값이라 여기 적어도 된다.
+# client_secret 은 절대 여기 적지 말 것 — 이 파일은 git에 추적 중이다.
+#   CI       : GitHub Actions Secrets 의 GOOGLE_CLIENT_SECRET (deploy.yml 이 -var 로 넘김)
+#   로컬 apply: $env:TF_VAR_google_client_secret = 'GOCSPX-...'  ← apply 하는 창에서 설정
+google_client_id   = "759497431576-f28o4ll26bpc9bs3t2t208rfq3sb4q3g.apps.googleusercontent.com"
+kakao_rest_api_key = "06d67e103df91a606ae16d88df5c6b34"

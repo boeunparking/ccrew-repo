@@ -47,6 +47,9 @@ locals {
   worker_task_role_arn   = "arn:aws:iam::${local.account_id}:role/worker-task-role"
 
   state_bucket = "ccrew-033177021117-ap-northeast-2-an"
+
+  frontend_bucket_name = "cloud-duck-frontend-apne2"
+  frontend_bucket_arn  = "arn:aws:s3:::${local.frontend_bucket_name}"
 }
 
 resource "aws_iam_openid_connect_provider" "github_actions" {
@@ -309,6 +312,56 @@ resource "aws_iam_role_policy" "github_actions_tf_state" {
         Condition = {
           StringLike = { "s3:prefix" = "clduck/*" }
         }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "github_actions_frontend_deploy" {
+  name = "github-actions-frontend-deploy"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.github_actions.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = "repo:boeunparking/ccrew-frontend-2:*"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "github_actions_frontend_deploy" {
+  name = "frontend-deploy-policy"
+  role = aws_iam_role.github_actions_frontend_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+        Resource = [
+          local.frontend_bucket_arn,
+          "${local.frontend_bucket_arn}/*"
+        ]
+      },
+      {
+        # CloudFront distribution ID는 생성 시점에 AWS가 부여하는 값이라 bootstrap에서
+        # 미리 알 수 없음 (ECR repo 이름처럼 우리가 미리 정하는 값이 아님).
+        # CreateInvalidation은 리소스 레벨 제한 자체가 실용적이지 않아 "*"로 둠.
+        Effect   = "Allow"
+        Action   = "cloudfront:CreateInvalidation"
+        Resource = "*"
       }
     ]
   })

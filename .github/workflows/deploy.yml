@@ -90,7 +90,13 @@ jobs:
             -var "image_tag_web=$IMAGE_TAG" \
             -var "image_tag_batch=$IMAGE_TAG" \
             -var "certificate_arn=${{ secrets.CERTIFICATE_ARN }}" \
-            -var "certificate_arn_tokyo=${{ secrets.CERTIFICATE_ARN_TOKYO }}"
+            -var "certificate_arn_tokyo=${{ secrets.CERTIFICATE_ARN_TOKYO }}" \
+            -var "google_client_secret=${{ secrets.GOOGLE_CLIENT_SECRET }}" \
+            -var "kakao_client_secret=${{ secrets.KAKAO_CLIENT_SECRET }}"
+        # google_client_secret 은 default가 없는 변수라 안 넘기면 apply가 멈춘다.
+        # 일부러 그렇게 뒀다 — 빈 값으로 조용히 성공해서 Secrets Manager를 덮어쓰는 것보다
+        # 여기서 실패하는 게 낫다. Actions > Secrets 에 GOOGLE_CLIENT_SECRET 등록 필수.
+        # kakao_client_secret 은 선택값이라 Secret이 없으면 빈 문자열로 들어간다(정상).
         # github_org / github_repo 는 더 이상 넘기지 않는다 — GitHub OIDC/IAM 롤이
         # terraform-bootstrap 으로 분리되면서 메인 스택에 그 변수 선언이 없어졌다.
         # 그대로 두면 "Value for undeclared variable" 에러로 apply 자체가 실패한다.

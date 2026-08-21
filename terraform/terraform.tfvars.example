@@ -35,6 +35,32 @@ alarm_email = "team@example.com"
 # 아래는 기본값이 있어 생략 가능. 바꿔야 할 때만 주석을 푼다.
 ########################################
 
+# ---- 소셜 로그인 (oauth.tf) ----
+# 비워두면 해당 공급자 버튼이 로그인 화면에 아예 안 뜬다 (앱이 알아서 비활성화한다).
+# 콘솔에 등록할 Redirect URI는 apply 후 `terraform output oauth_redirect_uris` 로 확인한다.
+#
+#   구글: console.cloud.google.com > API 및 서비스 > 사용자 인증 정보 > OAuth 클라이언트 ID(웹)
+#   카카오: developers.kakao.com > 내 애플리케이션 > 앱 키의 REST API 키
+#          + 카카오 로그인 활성화, Redirect URI 등록, 동의항목(닉네임/이메일) 설정
+#
+# client_id / REST API 키는 인가 URL에 실려 브라우저로 나가는 공개값이라 여기 적어도 된다.
+# google_client_id   = "xxxxxxxxxxxx-xxxxxxxx.apps.googleusercontent.com"
+# kakao_rest_api_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#
+# ⚠ client_secret 두 개는 이 파일에 적지 말 것.
+#   terraform.tfvars 는 현재 git에 추적 중이라 그대로 커밋된다.
+#
+#   CI       : GitHub Actions > Secrets 에 GOOGLE_CLIENT_SECRET 등록
+#              (.github/workflows/deploy.yml 이 -var 로 넘긴다. certificate_arn 과 같은 방식)
+#   로컬 apply: apply 하는 셸에서 환경변수로 넘긴다
+#     $env:TF_VAR_google_client_secret = 'GOCSPX-...'   # PowerShell
+#     export TF_VAR_google_client_secret='GOCSPX-...'    # bash
+#
+#   google_client_secret 은 default가 없어서 안 넘기면 apply가 멈춘다(의도된 동작).
+#   kakao_client_secret 은 카카오 콘솔에서 '사용함'으로 켠 경우에만 필요하다.
+#
+# JWT 서명 키는 사람이 정하지 않는다 — oauth.tf가 만들어 Secrets Manager에 넣는다.
+
 # 네트워크 (variables.tf 기본값)
 # vpc_cidr_seoul = "172.16.0.0/16"
 # vpc_cidr_tokyo = "172.17.0.0/16"
