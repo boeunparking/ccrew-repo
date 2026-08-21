@@ -172,6 +172,41 @@ module "cloudwatch_seoul" {
 }
 
 ########################################
+# 5'. CloudWatch — 도쿄(Warm Standby)
+#
+# 서울과 같은 구성이되 두 가지가 다르다:
+#   1) RDS 알람 제외 — 도쿄는 읽기 전용 replica라 서울 primary와 지표 성격이 다르고,
+#      module의 RDS 알람은 primary_identifier를 전제로 만들어져 있다.
+#   2) 대시보드 위젯 region을 도쿄로 넘긴다 — 알람/SNS는 provider를 따라가지만
+#      대시보드 위젯은 본문에 리전을 직접 써야 해서 provider만으론 안 된다.
+#
+# SNS 토픽도 리전별로 따로 생긴다(SNS는 리전 서비스). 즉 도쿄 알람은 도쿄 토픽으로
+# 발송되므로, 같은 alarm_email 주소로 구독 확인 메일이 한 번 더 온다.
+########################################
+module "cloudwatch_tokyo" {
+  source = "./modules/cloudwatch"
+  providers = {
+    aws = aws.tokyo
+  }
+
+  project          = var.project
+  name             = "tokyo"
+  region           = var.region_tokyo
+  alarm_email      = var.alarm_email
+  ecs_cluster_name = aws_ecs_cluster.tf_cluster_tokyo.name
+  ecs_service_name = module.web_service_tokyo.service_name
+
+  # 도쿄는 replica라 primary 기준 알람(FreeStorage 등)을 그대로 쓰기 어렵다
+  create_rds_alarms = false
+
+  alb_arn_suffix   = module.alb_tokyo.alb_arn_suffix
+  create_alb_alarm = true
+
+  cpu_threshold  = 80
+  period_seconds = 300
+}
+
+########################################
 # 7. 온프레미스 스택 — VPC/Subnet/IGW/RT + MinIO EC2 + EBS + DLM
 #    같은 계정·서울 리전(ap-northeast-2b)에 "온프레미스로 표기"되는 환경 구성
 ########################################
