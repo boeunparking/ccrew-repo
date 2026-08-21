@@ -47,6 +47,10 @@ data "aws_iam_policy_document" "ecs_execution_read_db_secrets" {
       # JWT 서명 키 + 소셜 로그인 client_secret (oauth.tf). 도쿄 복제본도 같이 열어준다.
       local.app_auth_secret_arn_seoul,
       local.app_auth_secret_arn_tokyo,
+      # 관리자 계정 시드 (admin-credentials.tf).
+      # 여기 빠지면 태스크가 시크릿 주입 단계에서 AccessDenied로 죽어
+      # PROVISIONING↔STOPPED를 무한 반복한다 — 컨테이너 로그도 안 남으므로 원인 찾기가 어렵다.
+      aws_secretsmanager_secret.admin.arn,
     ]
   }
 }
@@ -238,7 +242,8 @@ module "web_service" {
   secrets = concat([
     { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
-  ], local.web_auth_secrets_seoul)
+  ], local.web_auth_secrets_seoul, local.web_admin_secrets)
+
   desired_count                 = 2
   launch_type                   = "FARGATE"
   capacity_providers_dependency = aws_ecs_cluster_capacity_providers.tf_ccp

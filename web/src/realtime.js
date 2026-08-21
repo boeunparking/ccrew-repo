@@ -17,18 +17,24 @@ async function connectRedis() {
     console.warn('[ws] REDIS_URL 없음 — 단일 태스크에서만 브로드캐스트가 완전합니다');
     return;
   }
-  const { createClient } = await import('redis');
-  const pub = createClient({ url: process.env.REDIS_URL });
-  const sub = pub.duplicate();
-  await Promise.all([pub.connect(), sub.connect()]);
+  // 예전엔 node-redis('redis' 패키지)를 동적 import 했는데, package.json에 없는
+  // 패키지라 이 줄이 항상 던졌다 — 아래 catch가 삼켜서 경고만 남고,
+  // 태스크 간 브로드캐스트가 조용히 동작하지 않았다.
+  // 앱에 이미 들어있는 ioredis(valkey.js)를 그대로 쓴다.
+  const { default: redis } = await import('./valkey.js');
 
-  await sub.subscribe('auction-events', (raw) => {
+  // 구독 전용 커넥션이 따로 필요하다 — 구독 중인 커넥션으로는 다른 명령을 못 보낸다.
+  // duplicate()는 TLS 설정(rediss://)까지 그대로 복사한다.
+  const sub = redis.duplicate();
+
+  sub.on('message', (_channel, raw) => {
     const { auctionId, payload } = JSON.parse(raw);
     deliverLocal(auctionId, payload);
   });
+  await sub.subscribe('auction-events');
 
   publish = (auctionId, payload) =>
-    pub.publish('auction-events', JSON.stringify({ auctionId, payload }));
+    redis.publish('auction-events', JSON.stringify({ auctionId, payload }));
 
   console.log('[ws] redis pub/sub 연결됨');
 }
