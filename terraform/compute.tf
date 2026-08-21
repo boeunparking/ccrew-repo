@@ -44,6 +44,7 @@ data "aws_iam_policy_document" "ecs_execution_read_db_secrets" {
     resources = [
       module.rds_seoul.secret_arn,
       module.rds_tokyo_replica.secret_arn,
+      aws_secretsmanager_secret.admin.arn,
     ]
   }
 }
@@ -234,6 +235,9 @@ module "web_service" {
   secrets = [
     { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
+    # warmup의 admin 계정 시드용. 코드에 기본값을 두지 않으므로 이게 없으면 시드를 건너뛴다.
+    { name = "ADMIN_EMAIL", valueFrom = "${aws_secretsmanager_secret.admin.arn}:email::" },
+    { name = "ADMIN_PASSWORD", valueFrom = "${aws_secretsmanager_secret.admin.arn}:password::" },
   ]
 
   desired_count                 = 2
