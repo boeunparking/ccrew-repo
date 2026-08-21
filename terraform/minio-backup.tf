@@ -1,7 +1,7 @@
 ############################################################
 # 온프레미스 MinIO 설치 + RDS PII(users) 일일 백업
 #
-# vpn-strongswan.tf와 같은 패턴: EC2가 먼저 뜬 뒤 SSM Run Command로
+# vpn-libreswan.tf와 같은 패턴: EC2가 먼저 뜬 뒤 SSM Run Command로
 # 원격 설치한다. user_data를 안 쓰는 이유도 동일 — 이 파일이 참조하는
 # module.rds_seoul(비밀번호, 엔드포인트)이 EC2보다 늦게 완성될 수 있어서다.
 #
