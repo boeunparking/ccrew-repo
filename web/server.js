@@ -23,25 +23,35 @@ async function warmup() {
   // ALB가 이 태스크로 트래픽을 안 보내므로 안전하다.
   await pool.query('SELECT 1');
 
-  // 데모용 관리자 계정. 실제 배포에서는 반드시 지우거나 시드 스크립트로 분리할 것.
-  // upsert라서 재배포마다 다시 만들어도 에러 나지 않는다.
+  // 관리자 계정 시드. 자격증명은 코드에 두지 않고 환경변수로만 받는다 —
+  // 기본값을 넣어두면 그 값이 소스와 git 히스토리에 영구히 남고, 저장소를 볼 수 있는
+  // 사람은 누구나 운영 admin으로 로그인할 수 있게 된다.
+  // 운영에서는 Secrets Manager에 넣고 ECS task definition의 secrets로 주입한다
+  // (DB_USER/DB_PASSWORD와 같은 방식 — terraform/compute.tf 참고).
+  // 둘 중 하나라도 없으면 시드를 건너뛴다. 계정이 없으면 로그인만 안 될 뿐,
+  // 서버가 못 뜰 이유는 아니다.
   //
   // 도쿄(rds_tokyo_replica)는 읽기 전용 크로스 리전 replica라 이 쓰기 자체가 항상 실패한다.
   // 그래도 서버가 죽으면 안 된다 — 도쿄는 원래 읽기 트래픽만 받는 웜 스탠바이라, admin
   // 계정 시드 실패 정도로 부팅 자체를 막을 이유가 없다. DB 연결 확인(SELECT 1)은 위에서
   // 이미 통과했으니, 여기서부터는 실패해도 경고만 남기고 넘어간다.
-  try {
-    const email = process.env.ADMIN_EMAIL || 'admin@cloudduck.cloud';
-    const password = process.env.ADMIN_PASSWORD || 'admin1234';
-    await upsertUser({
-      id: crypto.randomUUID(),
-      email,
-      passwordHash: await bcrypt.hash(password, 10),
-      nickname: 'admin',
-      role: 'admin',
-    });
-  } catch (e) {
-    console.warn('[init] admin 계정 시드 실패 (읽기 전용 DB일 수 있음) — 무시하고 계속 진행', e.message);
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminEmail || !adminPassword) {
+    console.warn('[init] ADMIN_EMAIL/ADMIN_PASSWORD 미설정 — admin 계정 시드를 건너뜁니다');
+  } else {
+    try {
+      await upsertUser({
+        id: crypto.randomUUID(),
+        email: adminEmail,
+        passwordHash: await bcrypt.hash(adminPassword, 10),
+        nickname: 'admin',
+        role: 'admin',
+      });
+    } catch (e) {
+      console.warn('[init] admin 계정 시드 실패 (읽기 전용 DB일 수 있음) — 무시하고 계속 진행', e.message);
+    }
   }
 
   state.ready = true;
