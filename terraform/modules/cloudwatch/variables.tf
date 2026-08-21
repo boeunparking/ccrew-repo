@@ -6,6 +6,12 @@ variable "name" {
   type = string
 }
 
+variable "region" {
+  description = "대시보드 위젯이 지표를 조회할 리전. 알람/SNS는 provider를 따라가지만 대시보드 위젯은 리전을 본문에 직접 써야 한다"
+  type        = string
+  default     = "ap-northeast-2"
+}
+
 variable "alarm_email" {
   type = string
 }
