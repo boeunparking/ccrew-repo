@@ -6,7 +6,7 @@ output "vpn_gateway_id" {
   value = aws_vpn_gateway.this.id
 }
 
-# 온프레미스 EC2에서 strongSwan을 설정할 때 필요한 두 터널의 접속 정보.
+# 온프레미스 EC2에서 libreswan을 설정할 때 필요한 두 터널의 접속 정보.
 # preshared_key는 민감정보라 state에는 남지만(암호화 필요) outputs 자체에는
 # sensitive 처리해 CLI 출력/로그에 노출되지 않게 한다.
 output "tunnel1_address" {

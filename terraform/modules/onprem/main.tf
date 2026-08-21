@@ -2,7 +2,7 @@
 # 온프레미스(로 표기된) 스택 — 서울 리전 ap-northeast-2b
 # MinIO 백업 서버 1대 + 전용 VPC
 # 서울 ↔ 온프레미스 연결은 루트의 module "site_to_site_vpn_onprem" (Site-to-Site VPN)이 담당.
-# 이 모듈이 만드는 EIP를 물고 있는 EC2가 strongSwan으로 터널을 종단한다 (vpn-strongswan.tf).
+# 이 모듈이 만드는 EIP를 물고 있는 EC2가 libreswan으로 터널을 종단한다 (vpn-libreswan.tf).
 ########################################
 
 ########################################
@@ -42,7 +42,7 @@ resource "aws_internet_gateway" "this" {
 # 4. Route Table (onprem-rt1)
 #    0.0.0.0/0 → IGW 만 여기서 생성.
 #    172.16.0.0/16(서울) 방향은 VPC 라우팅 테이블에 경로를 추가하지 않는다 —
-#    EC2 위 strongSwan이 IPSec 정책(SPD) 레벨에서 터널링을 처리하므로 불필요.
+#    EC2 위 libreswan이 IPSec 정책(SPD) 레벨에서 터널링을 처리하므로 불필요.
 ########################################
 resource "aws_route_table" "rt1" {
   vpc_id = aws_vpc.this.id

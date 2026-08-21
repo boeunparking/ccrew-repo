@@ -8,7 +8,7 @@
 #   3. s3           : Source(서울) + CRR(도쿄)
 #   4. client-vpn   : 관리자 → DB 접근 (서울)
 #   5. cloudwatch   : CPU 80% 5분 알람 + SNS + 대시보드
-#   6. site-to-site-vpn : 서울 ↔ 온프레미스 (VGW/CGW/VPN Connection, EC2가 strongSwan으로 종단)
+#   6. site-to-site-vpn : 서울 ↔ 온프레미스 (VGW/CGW/VPN Connection, EC2가 libreswan으로 종단)
 #   7. onprem       : 온프레미스(로 표기) VPC + MinIO EC2 (서울 2b)
 #
 # 네트워크(VPC/Subnet/RouteTable/SG/NACL)는 ccrew-tf 의 region_stack 모듈이
@@ -220,7 +220,7 @@ module "onprem" {
 # 6. Site-to-Site VPN — 서울 VPC ↔ 온프레미스(module.onprem 이 만든) VPC
 #    (구성도 그대로 실제 구현. 예전엔 VPC Peering으로 대체했으나 modules/vpc-peering는 삭제됨)
 #    온프레미스에 실제 라우터가 없으므로 module.onprem의 EC2가 EIP를 물고
-#    strongSwan으로 터널을 종단해 그 역할을 겸한다 (vpn-strongswan.tf).
+#    libreswan으로 터널을 종단해 그 역할을 겸한다 (vpn-libreswan.tf).
 ########################################
 module "site_to_site_vpn_onprem" {
   source = "./modules/site-to-site-vpn"
