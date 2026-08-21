@@ -82,8 +82,12 @@ resource "aws_secretsmanager_secret_version" "db" {
 resource "aws_db_instance" "primary" {
   count = var.create_primary ? 1 : 0
 
-  identifier        = "${var.project}-${var.name}-primary"
-  availability_zone = var.primary_availability_zone #추가
+  identifier = "${var.project}-${var.name}-primary"
+
+  # Multi-AZ는 AWS가 여러 AZ에 걸쳐 배치하는 방식이라 AZ를 하나로 고정할 수 없다
+  # ("Requesting a specific availability zone is not valid for Multi-AZ instances").
+  # 단일 AZ 구성일 때만 구성도상의 지정 AZ(ap-northeast-2a)를 적용한다.
+  availability_zone = var.multi_az ? null : var.primary_availability_zone
   engine            = "mysql"
   engine_version    = var.engine_version
   instance_class    = var.instance_class

@@ -22,6 +22,33 @@ resource "aws_vpc_peering_connection_accepter" "seoul_tokyo" {
 }
 
 
+### 피어링 DNS 해석 ###
+# 상대 리전의 사설 엔드포인트(예: RDS)를 DNS 이름으로 조회했을 때 공인 IP가 아니라
+# 사설 IP로 해석되게 한다. 지금 구성은 서울/도쿄가 각자 자기 리전 DB·캐시만 쓰므로
+# 당장 필요하진 않지만, 향후 리전을 교차해 붙는 설계(예: 페일오버 중 서울 앱이 도쿄
+# RDS를 직접 조회)로 바뀌면 이게 없을 때 트래픽이 공인 경로로 새어나간다.
+#
+# 양쪽 다 설정해야 효력이 있다 - 요청자/수락자 각각 자기 쪽 해석 방식만 제어한다.
+# 피어링이 "수락된 뒤"에만 설정할 수 있어서 connection이 아니라 accepter의 id를 참조한다.
+
+resource "aws_vpc_peering_connection_options" "seoul_tokyo_requester" {
+  vpc_peering_connection_id = aws_vpc_peering_connection_accepter.seoul_tokyo.id
+
+  requester {
+    allow_remote_vpc_dns_resolution = true
+  }
+}
+
+resource "aws_vpc_peering_connection_options" "seoul_tokyo_accepter" {
+  provider                  = aws.tokyo
+  vpc_peering_connection_id = aws_vpc_peering_connection_accepter.seoul_tokyo.id
+
+  accepter {
+    allow_remote_vpc_dns_resolution = true
+  }
+}
+
+
 ### 라우팅: DB 라우팅 테이블에서만 상대 리전 VPC로 경로 추가 ###
 # (복제 트래픽은 db 계층끼리만 오가므로 pub/pri 라우팅 테이블은 건드리지 않음)
 

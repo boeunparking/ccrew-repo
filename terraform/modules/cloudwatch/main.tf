@@ -138,7 +138,7 @@ resource "aws_cloudwatch_dashboard" "this" {
         height = 6
         properties = {
           title  = "ECS CPU / Memory"
-          region = "ap-northeast-2"
+          region = var.region
           stat   = "Average"
           period = 300
           metrics = [
@@ -155,7 +155,7 @@ resource "aws_cloudwatch_dashboard" "this" {
         height = 6
         properties = {
           title  = "RDS CPU / Connections"
-          region = "ap-northeast-2"
+          region = var.region
           stat   = "Average"
           period = 300
           metrics = var.rds_identifier != null ? [

@@ -25,15 +25,24 @@ async function warmup() {
 
   // 데모용 관리자 계정. 실제 배포에서는 반드시 지우거나 시드 스크립트로 분리할 것.
   // upsert라서 재배포마다 다시 만들어도 에러 나지 않는다.
-  const email = process.env.ADMIN_EMAIL || 'admin@cloudduck.cloud';
-  const password = process.env.ADMIN_PASSWORD || 'admin1234';
-  await upsertUser({
-    id: crypto.randomUUID(),
-    email,
-    passwordHash: await bcrypt.hash(password, 10),
-    nickname: 'admin',
-    role: 'admin',
-  });
+  //
+  // 도쿄(rds_tokyo_replica)는 읽기 전용 크로스 리전 replica라 이 쓰기 자체가 항상 실패한다.
+  // 그래도 서버가 죽으면 안 된다 — 도쿄는 원래 읽기 트래픽만 받는 웜 스탠바이라, admin
+  // 계정 시드 실패 정도로 부팅 자체를 막을 이유가 없다. DB 연결 확인(SELECT 1)은 위에서
+  // 이미 통과했으니, 여기서부터는 실패해도 경고만 남기고 넘어간다.
+  try {
+    const email = process.env.ADMIN_EMAIL || 'admin@cloudduck.cloud';
+    const password = process.env.ADMIN_PASSWORD || 'admin1234';
+    await upsertUser({
+      id: crypto.randomUUID(),
+      email,
+      passwordHash: await bcrypt.hash(password, 10),
+      nickname: 'admin',
+      role: 'admin',
+    });
+  } catch (e) {
+    console.warn('[init] admin 계정 시드 실패 (읽기 전용 DB일 수 있음) — 무시하고 계속 진행', e.message);
+  }
 
   state.ready = true;
   console.log('[init] warmup 완료, 트래픽 수신 시작');
