@@ -1,3 +1,8 @@
 node_modules
 dist
 .DS_Store
+
+# 로컬 환경변수 — client_secret과 DB 비밀번호가 들어가므로 절대 커밋 금지.
+# 템플릿(.env.local.example)만 추적한다.
+.env*
+!.env.local.example

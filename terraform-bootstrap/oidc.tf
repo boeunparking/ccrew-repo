@@ -333,7 +333,7 @@ resource "aws_iam_role" "github_actions_frontend_deploy" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:boeunparking/ccrew-frontend-2:*"
+          "token.actions.githubusercontent.com:sub" = "repo:boeunparking/ccrew-frontend:*"
         }
       }
     }]
@@ -370,4 +370,9 @@ resource "aws_iam_role_policy" "github_actions_frontend_deploy" {
 output "github_actions_role_arn" {
   description = ".github/workflows/deploy.yml 의 role-to-assume 에 들어가는 값"
   value       = aws_iam_role.github_actions_deploy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "github_actions_readonly" {
+  role       = aws_iam_role.github_actions_deploy.id
+  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }

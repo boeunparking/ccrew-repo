@@ -11,7 +11,6 @@
  * 정책은 src/routes/oauthRoutes.js 에 있다.
  */
 import crypto from 'crypto';
-import redis from './valkey.js';
 import { PUBLIC_API_BASE_URL } from './config.js';
 
 /** 인가 요청을 시작하고 콜백이 돌아올 때까지 state를 들고 있는 시간 */
@@ -128,21 +127,72 @@ export function createPkce() {
   return { verifier, challenge };
 }
 
+// 저장소는 두 가지다.
+//   REDIS_URL 있음 → Valkey. 배포 환경은 compute.tf가 항상 넣어주므로 이쪽이다.
+//   REDIS_URL 없음 → 프로세스 메모리. 로컬에 Redis를 안 띄우고도 소셜 로그인을
+//                    테스트할 수 있게 하는 개발용 경로다. 태스크가 하나뿐이라 동작한다.
+// 배포에서 이 폴백으로 떨어지면 안 된다 — 태스크가 2개 이상이면 인가 요청과 콜백이
+// 다른 컨테이너로 갈라져 invalid_state가 산발적으로 난다. 그래서 경고를 크게 남긴다.
+function memoryStore() {
+  const map = new Map();
+  return {
+    async set(key, value, ttlSeconds) {
+      map.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+    },
+    async take(key) {
+      const hit = map.get(key);
+      if (!hit) return null;
+      map.delete(key); // 어차피 1회용이라 만료 여부와 무관하게 지운다
+      return hit.expiresAt > Date.now() ? hit.value : null;
+    },
+  };
+}
+
+function valkeyStore(redis) {
+  return {
+    async set(key, value, ttlSeconds) {
+      await redis.set(key, value, 'EX', ttlSeconds);
+    },
+    async take(key) {
+      try {
+        return await redis.getdel(key);
+      } catch {
+        // GETDEL은 Redis 6.2+ 명령이다. 구버전이면 읽고 지우는 걸로 대체한다.
+        const raw = await redis.get(key);
+        if (raw) await redis.del(key);
+        return raw;
+      }
+    },
+  };
+}
+
+let storePromise = null;
+
+function stateStore() {
+  if (storePromise) return storePromise;
+
+  if (process.env.REDIS_URL) {
+    // 동적 import라서 REDIS_URL이 없으면 Valkey 연결 자체를 시도하지 않는다.
+    storePromise = import('./valkey.js').then((m) => valkeyStore(m.default));
+  } else {
+    console.warn(
+      '[oauth] REDIS_URL이 없어 state를 프로세스 메모리에 둔다 — 로컬 개발 전용. ' +
+        '배포 환경에서 이 로그가 보이면 태스크가 여러 개일 때 invalid_state가 발생한다.',
+    );
+    storePromise = Promise.resolve(memoryStore());
+  }
+  return storePromise;
+}
+
 export async function saveState(state, payload) {
-  await redis.set(`oauth:state:${state}`, JSON.stringify(payload), 'EX', STATE_TTL_SECONDS);
+  const store = await stateStore();
+  await store.set(`oauth:state:${state}`, JSON.stringify(payload), STATE_TTL_SECONDS);
 }
 
 /** 한 번 쓰면 사라진다 — 같은 인가코드를 두 번 태우는 재생 공격을 막는다. */
 export async function consumeState(state) {
-  const key = `oauth:state:${state}`;
-  let raw;
-  try {
-    raw = await redis.getdel(key);
-  } catch {
-    // GETDEL은 Redis 6.2+ 명령이다. 구버전이면 읽고 지우는 걸로 대체한다.
-    raw = await redis.get(key);
-    if (raw) await redis.del(key);
-  }
+  const store = await stateStore();
+  const raw = await store.take(`oauth:state:${state}`);
   if (!raw) return null;
   try {
     return JSON.parse(raw);

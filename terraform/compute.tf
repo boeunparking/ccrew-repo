@@ -234,11 +234,11 @@ module "web_service" {
     { name = "DB_PORT", value = "3306" },
     { name = "DB_NAME", value = "cloud_duck" },
   ], local.web_oauth_environment)
+
   secrets = concat([
     { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
   ], local.web_auth_secrets_seoul)
-
   desired_count                 = 2
   launch_type                   = "FARGATE"
   capacity_providers_dependency = aws_ecs_cluster_capacity_providers.tf_ccp
