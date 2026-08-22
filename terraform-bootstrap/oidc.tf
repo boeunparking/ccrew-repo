@@ -50,6 +50,45 @@ locals {
 
   frontend_bucket_name = "cloud-duck-frontend-apne2"
   frontend_bucket_arn  = "arn:aws:s3:::${local.frontend_bucket_name}"
+
+  ##########################################################
+  # GitHub OIDC 의 sub 클레임 형식
+  #
+  # GitHub 는 sub 에 org/repo "이름" 뒤에 불변 숫자 ID 를 붙여서 보낸다:
+  #   repo:boeunparking@278609587/ccrew-repo@1332880647:ref:refs/heads/main
+  # 이름은 바꾸거나 남에게 넘길 수 있지만 ID 는 안 바뀌므로, 해제된 org 이름을
+  # 제3자가 선점해 롤을 탈취하는 걸 막아준다.
+  #
+  # 확인 방법:
+  #   curl https://api.github.com/repos/<org>/<repo>/actions/oidc/customization/sub
+  #   → sub_claim_prefix 필드가 실제로 쓰이는 접두사다
+  #
+  # 이름만 있는 기본 형식도 함께 허용한다 — GitHub 가 둘 중 어느 쪽을 보내든
+  # 동작해야 하고, 이 설정이 나중에 되돌아가도 CI 가 멈추지 않게 하기 위해서다.
+  #
+  # 이름에 "*" 를 붙이는 방식(repo:boeunparking*/ccrew-repo*)으로도 매칭은 되지만
+  # 쓰지 않는다. 그 패턴은 "boeunparking" 으로 시작하는 아무 org 의
+  # "ccrew-repo" 로 시작하는 아무 레포에나 열려 있어서, 누구나 그런 이름의
+  # org/레포를 새로 만들어 이 롤을 assume 할 수 있다.
+  ##########################################################
+  github_org_id = "278609587"
+
+  repo_ids = {
+    ccrew_repo     = "1332880647"
+    ccrew_frontend = "1316993984"
+  }
+
+  # ccrew-repo: main 브랜치 push 로만 한정
+  sub_ccrew_repo = [
+    "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
+    "repo:${var.github_org}@${local.github_org_id}/${var.github_repo}@${local.repo_ids.ccrew_repo}:ref:refs/heads/main",
+  ]
+
+  # ccrew-frontend: 별도 레포. 브랜치 제한은 워크플로우(on.push.branches)에 맡긴다.
+  sub_ccrew_frontend = [
+    "repo:${var.github_org}/ccrew-frontend:*",
+    "repo:${var.github_org}@${local.github_org_id}/ccrew-frontend@${local.repo_ids.ccrew_frontend}:*",
+  ]
 }
 
 resource "aws_iam_openid_connect_provider" "github_actions" {
@@ -79,7 +118,7 @@ resource "aws_iam_role" "github_actions_deploy" {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}*/${var.github_repo}*:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:sub" = local.sub_ccrew_repo
           }
         }
       }
@@ -333,7 +372,7 @@ resource "aws_iam_role" "github_actions_frontend_deploy" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:boeunparking/ccrew-frontend:*"
+          "token.actions.githubusercontent.com:sub" = local.sub_ccrew_frontend
         }
       }
     }]

@@ -52,6 +52,33 @@ resource "aws_s3_bucket_public_access_block" "source" {
   restrict_public_buckets = true
 }
 
+# 브라우저 → S3 직접 업로드(presigned PUT)를 위한 CORS.
+#
+# uploadRoutes.js 는 이미지를 백엔드 컨테이너로 받지 않고 서명된 URL 만 발급한다.
+# 그래서 실제 PUT 은 브라우저에서 S3 도메인으로 나가는 교차 출처 요청이 되는데,
+# 버킷에 CORS 설정이 없으면 S3 가 프리플라이트를 403 으로 거절한다.
+# (버킷을 공개로 만드는 것과는 무관하다 — public access block 은 그대로 4개 다 true다.)
+#
+# GET 은 넣지 않았다. 업로드된 이미지는 CloudFront 를 통해 같은 도메인으로 읽는 게
+# 맞고, 그러면 교차 출처가 아니라서 CORS 자체가 필요 없다.
+resource "aws_s3_bucket_cors_configuration" "source" {
+  provider = aws.source
+  count    = length(var.source_cors_origins) > 0 ? 1 : 0
+
+  bucket = aws_s3_bucket.source.id
+
+  cors_rule {
+    allowed_methods = ["PUT"]
+    allowed_origins = var.source_cors_origins
+    # presigned PUT 은 Content-Type 을 서명에 포함하므로 브라우저가 그 헤더를 함께 보낸다.
+    # 허용 헤더를 좁히면 그 조합을 일일이 맞춰야 해서 깨지기 쉽다.
+    allowed_headers = ["*"]
+    # 업로드 실패 시 응답 헤더를 프론트에서 읽을 수 있게 한다.
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 # 버킷의 모든 객체 이벤트(생성/삭제 등)를 서울 리전 기본 EventBridge 버스로 보낸다.
 # 이미지 모더레이션 파이프라인(EventBridge → SQS → Lambda → Rekognition)의 시작점.
 resource "aws_s3_bucket_notification" "source_eventbridge" {

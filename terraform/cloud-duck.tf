@@ -129,6 +129,15 @@ module "s3" {
   source_bucket_name      = "${var.project}-source-apne2"
   destination_bucket_name = "${var.project}-crr-apne1"
   source_kms_key_id       = aws_kms_key.seoul.arn
+
+  # 브라우저가 presigned URL 로 직접 PUT 하는 오리진. 프론트 도메인과 로컬 개발 서버.
+  # (백엔드 CORS 허용 목록과 같은 집합으로 맞춰둔다 — web/src/config.js 참고)
+  source_cors_origins = [
+    "https://${var.domain_name}",
+    "https://www.${var.domain_name}",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+  ]
 }
 
 ########################################
