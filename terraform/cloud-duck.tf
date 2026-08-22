@@ -31,6 +31,54 @@ resource "aws_kms_alias" "seoul" {
   target_key_id = aws_kms_key.seoul.key_id
 }
 
+# source 버킷이 이 키로 암호화돼 있어서, CloudFront(OAC)가 이미지를 읽으려면
+# 키 정책에서 직접 kms:Decrypt 를 허용해야 한다. 서비스 주체는 IAM 롤이 아니라
+# 키 정책으로만 권한을 받기 때문에 다른 방법이 없다.
+#
+# aws_kms_key 의 policy 인자가 아니라 별도 리소스를 쓰는 이유 — 순환 의존성:
+#   aws_kms_key.seoul → (정책이 배포 ARN 참조) → CloudFront 배포
+#     → (origin 이 source 버킷 참조) → module.s3 → (암호화 키 참조) → aws_kms_key.seoul
+#   정책을 키 리소스 안에 인라인으로 넣으면 이 고리가 닫혀서 terraform 이
+#   "Cycle" 에러로 plan 자체를 거부한다. 정책을 별도 리소스로 떼면 키는 배포를
+#   모르는 채로 먼저 만들어지고 고리가 끊긴다.
+#
+# ⚠ 첫 번째 문장(root 전체 권한)은 지우면 안 된다. 현재 이 키는 명시적 정책 없이
+#   AWS 기본 정책을 쓰고 있고, 그 내용이 정확히 이 문장 하나다. 이걸 빠뜨리고
+#   덮어쓰면 계정에서 키를 관리할 수 없게 되고 되돌릴 방법도 없다.
+#   ECS 태스크 롤의 kms 권한(compute.tf 의 ecs-task-kms-seoul)과 RDS 의 그랜트는
+#   전부 이 문장이 IAM 에 위임해주는 것에 기대고 있다.
+resource "aws_kms_key_policy" "seoul" {
+  key_id = aws_kms_key.seoul.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Id      = "key-default-1"
+    Statement = [
+      {
+        Sid       = "Enable IAM User Permissions"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        # 이 배포에서 온 요청만. SourceArn 조건이 없으면 다른 계정의 CloudFront 배포도
+        # 이 키로 복호화를 시도할 수 있는 혼동된 대리자(confused deputy) 문제가 생긴다.
+        Sid       = "AllowCloudFrontOACDecrypt"
+        Effect    = "Allow"
+        Principal = { Service = "cloudfront.amazonaws.com" }
+        Action    = "kms:Decrypt"
+        Resource  = "*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
+          }
+        }
+      },
+    ]
+  })
+}
+
 ########################################
 # 1. RDS — 서울: Primary(2a) + 같은 리전 Replica(2c), Multi-AZ
 ########################################

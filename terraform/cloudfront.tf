@@ -106,11 +106,54 @@ resource "aws_cloudfront_distribution" "frontend" {
     origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
   }
 
+  # 경매 이미지가 들어있는 source 버킷. 프론트 버킷과는 별개다.
+  # OAC 는 origin 단위가 아니라 배포 단위로 재사용 가능해서 frontend 것을 그대로 쓴다.
+  origin {
+    domain_name              = module.s3.source_bucket_regional_domain_name
+    origin_id                = "s3-uploads"
+    origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
+  }
+
   default_cache_behavior {
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "s3-frontend"
     viewer_protocol_policy = "redirect-to-https"
+
+    forwarded_values {
+      query_string = false
+      cookies { forward = "none" }
+    }
+  }
+
+  # 업로드된 이미지만 source 버킷으로 보낸다.
+  #
+  # 패턴이 왜 "/auctions/*/*" 인가:
+  #   업로드 키는 uploadRoutes.js 가 auctions/<사용자ID>/<타임스탬프-uuid>.<확장자> 로 만든다.
+  #   그런데 SPA 에도 /auctions, /auctions/new, /auctions/:id 라우트가 있어서
+  #   "/auctions/*" 로 잡으면 화면 이동까지 전부 S3 로 새어나간다. 그러면 없는 키를
+  #   찾다가 403 이 나고, custom_error_response 가 그걸 index.html 로 되돌려서
+  #   "우연히 동작"하긴 하지만 매 이동마다 헛된 S3 요청이 생긴다.
+  #
+  #   슬래시가 두 번 나오는 경로만 잡으면 둘이 정확히 갈린다:
+  #     /auctions/new                        → 슬래시 1개, 매칭 안 됨 → SPA
+  #     /auctions/42                         → 슬래시 1개, 매칭 안 됨 → SPA
+  #     /auctions/<사용자ID>/<파일>.png      → 슬래시 2개, 매칭     → S3
+  #
+  #   주의: 나중에 /auctions/:id/bids 같은 2단계 SPA 라우트를 추가하면 이 구분이
+  #   깨진다. 그때는 업로드 키 접두사를 auctions/ 가 아닌 걸로 바꾸는 게 맞다.
+  ordered_cache_behavior {
+    path_pattern           = "/auctions/*/*"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "s3-uploads"
+    viewer_protocol_policy = "redirect-to-https"
+
+    # 이미지 키에 타임스탬프와 uuid 가 들어가서 같은 키가 다른 내용으로 바뀌지 않는다.
+    # 그래서 길게 캐시해도 안전하다.
+    min_ttl     = 0
+    default_ttl = 86400
+    max_ttl     = 31536000
 
     forwarded_values {
       query_string = false
@@ -157,6 +200,32 @@ resource "aws_s3_bucket_policy" "frontend" {
       Principal = { Service = "cloudfront.amazonaws.com" }
       Action    = "s3:GetObject"
       Resource  = "${aws_s3_bucket.frontend.arn}/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
+        }
+      }
+    }]
+  })
+}
+
+########################################
+# source 버킷 정책 — CloudFront(OAC)만 이미지 GetObject 허용
+#
+# 이 버킷은 계속 비공개다(public access block 4개 전부 true). 브라우저는 S3 를
+# 직접 읽지 않고 CloudFront 를 통해서만 이미지를 받는다.
+########################################
+resource "aws_s3_bucket_policy" "uploads" {
+  bucket = module.s3.source_bucket_id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowCloudFrontOAC"
+      Effect    = "Allow"
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:GetObject"
+      Resource  = "${module.s3.source_bucket_arn}/*"
       Condition = {
         StringEquals = {
           "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
