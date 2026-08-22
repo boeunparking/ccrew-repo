@@ -47,6 +47,14 @@ export function isEnded(auction) {
   return secondsLeft(auction) === 0;
 }
 
+// "마감임박"의 기준. 목록 필터(auctionRoutes)와 입찰내역 요약(bidRoutes)이
+// 같은 값을 써야 하므로 여기 한 곳에서만 정의한다.
+export const CLOSING_SOON_SECONDS = 3600;
+
+export function isClosingSoon(auction) {
+  return !isEnded(auction) && secondsLeft(auction) <= CLOSING_SOON_SECONDS;
+}
+
 export function toImagePath(key) {
   if (!key) return null;
   return ASSET_BASE_URL ? `${ASSET_BASE_URL}/${key}` : `/${key}`;
@@ -245,6 +253,45 @@ export async function createBid(bid) {
     'INSERT INTO bids (id, auction_id, user_id, price) VALUES (?, ?, ?, ?)',
     [bid.id, bid.auctionId, bid.userId, bid.price],
   );
+}
+
+/**
+ * 경매를 관련 데이터까지 통째로 지운다 (관리자 전용).
+ *
+ * auction_images / bids 의 외래키에 ON DELETE CASCADE 가 없어서, 자식 행을 먼저
+ * 지우지 않으면 외래키 제약으로 삭제 자체가 거부된다. 그리고 셋 중 하나라도
+ * 실패했을 때 절반만 지워진 상태로 남으면 안 되므로 트랜잭션으로 묶는다.
+ *
+ * S3 에 남는 이미지 파일은 여기서 건드리지 않고 키만 돌려준다 —
+ * DB 삭제는 원자적이어야 하는데 S3 삭제는 그 트랜잭션에 넣을 수 없기 때문이다.
+ * 정리는 호출하는 쪽이 커밋 이후에 별도로 한다.
+ */
+export async function deleteAuction(id) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [images] = await conn.query(
+      'SELECT image_key FROM auction_images WHERE auction_id = ?',
+      [id],
+    );
+
+    await conn.query('DELETE FROM bids WHERE auction_id = ?', [id]);
+    await conn.query('DELETE FROM auction_images WHERE auction_id = ?', [id]);
+    const [result] = await conn.query('DELETE FROM auctions WHERE id = ?', [id]);
+
+    await conn.commit();
+
+    return {
+      deleted: result.affectedRows > 0,
+      imageKeys: images.map((i) => i.image_key),
+    };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 }
 
 export async function countAllBids() {

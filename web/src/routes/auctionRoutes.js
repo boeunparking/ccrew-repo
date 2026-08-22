@@ -7,6 +7,7 @@ import {
   getBidsForAuction,
   secondsLeft,
   isEnded,
+  isClosingSoon,
   toListItem,
   toImagePath,
 } from "../store.js";
@@ -26,8 +27,7 @@ router.get("/", async (req, res) => {
 
   if (status === "진행중") list = list.filter((a) => !isEnded(a));
   else if (status === "종료") list = list.filter((a) => isEnded(a));
-  else if (status === "마감임박")
-    list = list.filter((a) => !isEnded(a) && secondsLeft(a) <= 600);
+  else if (status === "마감임박") list = list.filter(isClosingSoon);
 
   if (sort === "endingSoon")
     list.sort((a, b) => secondsLeft(a) - secondsLeft(b));

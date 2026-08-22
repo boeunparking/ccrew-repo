@@ -8,6 +8,7 @@ import {
   getBidsForAuction,
   secondsLeft,
   isEnded,
+  CLOSING_SOON_SECONDS,
 } from '../store.js';
 import { requireAuth } from '../authMiddleware.js';
 import { broadcast } from '../realtime.js';
@@ -138,7 +139,8 @@ router.get('/bids/me', requireAuth, async (req, res) => {
       total: items.length,
       leading: items.filter((i) => !i.ended && i.price <= i.myBid).length,
       competing: items.filter((i) => !i.ended && i.price > i.myBid).length,
-      closingSoon: items.filter((i) => !i.ended && i.secondsLeft <= 600).length,
+      // 목록의 "마감임박" 필터와 같은 기준을 써야 사용자가 보는 숫자가 어긋나지 않는다.
+      closingSoon: items.filter((i) => !i.ended && i.secondsLeft <= CLOSING_SOON_SECONDS).length,
     },
   });
 });
