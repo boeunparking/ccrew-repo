@@ -86,11 +86,17 @@ resource "aws_secretsmanager_secret_version" "app_auth" {
 # 복제본 ARN은 리전 부분만 다르고 뒤의 무작위 접미사는 동일하다.
 # (aws_secretsmanager_secret에 복제본 ARN을 내주는 속성이 없어서 직접 만든다)
 locals {
-  # secret이 아니라 secret_version의 arn을 쓴다. 값은 같지만 의존성이 달라진다 —
-  # 이렇게 해야 태스크 정의가 "값이 채워진 시크릿"에 의존하게 된다.
-  # secret(껍데기)만 참조하면 CI의 -target apply가 version을 건너뛰고,
-  # JSON 키가 없는 시크릿을 참조한 컨테이너가 기동에 실패한다.
-  app_auth_secret_arn_seoul = aws_secretsmanager_secret_version.app_auth.secret_arn
+  # 반드시 secret(껍데기)의 arn을 쓴다. secret_version의 arn을 쓰면 안 된다.
+  #
+  # version을 참조하면 태스크 정의의 의존성 그래프에 version 리소스가 딸려 들어가고,
+  # CI(deploy.yml)의 -target apply가 그걸 refresh 하려고 GetSecretValue를 호출한다.
+  # CI 롤에는 DescribeSecret/ListSecretVersionIds만 있고 GetSecretValue는 일부러 뺐다 —
+  # 저장소에 푸시할 수 있는 사람이 JWT 서명 키와 client_secret을 읽어갈 수 있게 되기 때문이다.
+  # 그래서 version을 참조하면 CI가 AccessDeniedException으로 통째로 실패한다.
+  #
+  # 대신 최초 생성 시 version보다 태스크 정의가 먼저 만들어질 수 있다. 그때는 태스크가
+  # "키가 없다"로 한 번 실패하지만 ECS가 재시도하므로 결국 정상화된다.
+  app_auth_secret_arn_seoul = aws_secretsmanager_secret.app_auth.arn
   app_auth_secret_arn_tokyo = replace(
     aws_secretsmanager_secret.app_auth.arn,
     var.region_seoul,

@@ -50,10 +50,10 @@ locals {
   # 도쿄는 읽기 전용 replica라 warmup의 admin 시드(INSERT)가 어차피 항상 실패하고,
   # ECS는 같은 리전의 시크릿만 읽을 수 있어서 서울 ARN을 도쿄에 주면 태스크가 아예 안 뜬다.
   #
-  # secret이 아니라 secret_version의 ARN을 쓰는 이유는 oauth.tf와 같다:
-  # 값이 채워지기 전에 태스크 정의가 참조하면 "키가 없다"로 기동이 실패한다.
+  # secret_version이 아니라 secret의 ARN을 써야 한다 — 이유는 oauth.tf의 locals 주석 참고.
+  # (version을 참조하면 CI의 -target apply가 GetSecretValue 권한이 없어 실패한다)
   web_admin_secrets = [
-    { name = "ADMIN_EMAIL", valueFrom = "${aws_secretsmanager_secret_version.admin.secret_arn}:email::" },
-    { name = "ADMIN_PASSWORD", valueFrom = "${aws_secretsmanager_secret_version.admin.secret_arn}:password::" },
+    { name = "ADMIN_EMAIL", valueFrom = "${aws_secretsmanager_secret.admin.arn}:email::" },
+    { name = "ADMIN_PASSWORD", valueFrom = "${aws_secretsmanager_secret.admin.arn}:password::" },
   ]
 }
