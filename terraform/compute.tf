@@ -136,11 +136,17 @@ module "alb_tokyo" {
 # ECR은 리전 단위 리소스라 도쿄에는 저장소를 새로 만들지 않고,
 # 계정 단위 복제 설정으로 서울 저장소의 이미지를 도쿄 레지스트리로 그대로 복제한다.
 
+# force_delete: 이미지가 남아 있어도 저장소를 지운다.
+# 안 켜두면 destroy 가 RepositoryNotEmptyException 으로 막히고, 사람이 이미지를
+# 일일이 지운 뒤 다시 destroy 해야 한다. 여기 이미지는 CI 가 커밋 SHA 로 다시
+# 빌드해서 올리는 산출물이라 원본이 git 에 있고, 잃어도 복구 가능하다.
 resource "aws_ecr_repository" "tf_web_ecr" {
-  name = "tf-web-ecr"
+  name         = "tf-web-ecr"
+  force_delete = true
 }
 resource "aws_ecr_repository" "tf_batch_ecr" {
-  name = "tf-batch-ecr"
+  name         = "tf-batch-ecr"
+  force_delete = true
 }
 
 resource "aws_ecr_replication_configuration" "this" {

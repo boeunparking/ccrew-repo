@@ -13,9 +13,17 @@ terraform {
 ########################################
 # 서울: S3 Source 버킷
 ########################################
+# force_destroy: 객체가 남아 있어도 버킷을 지운다.
+#
+# 이 버킷은 버저닝이 켜져 있어서(CRR 필수 조건) 일반 삭제로는 절대 안 비워진다 —
+# 현재 버전을 지워도 이전 버전과 삭제 마커가 남아 BucketNotEmpty 로 destroy 가 막힌다.
+# 그러면 사람이 list-object-versions 로 버전을 전부 훑어 지우는 수밖에 없다.
+#
+# ⚠ 켜두면 destroy 시 업로드된 경매 이미지가 전부 사라진다. 되돌릴 수 없다.
 resource "aws_s3_bucket" "source" {
-  provider = aws.source
-  bucket   = var.source_bucket_name
+  provider      = aws.source
+  bucket        = var.source_bucket_name
+  force_destroy = true
 
   tags = { Name = "${var.project}-s3-source" }
 }
@@ -90,9 +98,12 @@ resource "aws_s3_bucket_notification" "source_eventbridge" {
 ########################################
 # 도쿄: S3 CRR 대상 버킷
 ########################################
+# source 버킷과 같은 이유로 force_destroy. 여기는 CRR 복제본이라 원본이 서울에 있고,
+# 서울이 같이 지워지는 destroy 상황에서는 어차피 함께 사라질 사본이다.
 resource "aws_s3_bucket" "destination" {
-  provider = aws.destination
-  bucket   = var.destination_bucket_name
+  provider      = aws.destination
+  bucket        = var.destination_bucket_name
+  force_destroy = true
 
   tags = { Name = "${var.project}-s3-crr" }
 }
