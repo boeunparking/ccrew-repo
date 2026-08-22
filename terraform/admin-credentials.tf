@@ -35,8 +35,12 @@ variable "admin_email" {
 #   둘 중 하나로 넘긴다 — google_client_secret 과 같은 방식이다:
 #     secrets.auto.tfvars 에 적기   (이 파일은 gitignore 되고 추적되지 않는다)
 #     $env:TF_VAR_admin_password = '...'   (PowerShell)
+#
+# 이 값은 시크릿이 "처음 만들어질 때"만 쓰인다. 이미 만들어져 있으면 여기 뭘 적어도
+# 반영되지 않는다(아래 aws_secretsmanager_secret_version 의 ignore_changes 참고).
+# 이미 있는 비밀번호를 바꾸는 방법도 거기 적어뒀다.
 variable "admin_password" {
-  description = "관리자 비밀번호. 비워두면 20자 랜덤을 자동 생성한다"
+  description = "관리자 비밀번호(최초 생성 시에만 적용). 비워두면 20자 랜덤을 자동 생성한다"
   type        = string
   default     = null
   sensitive   = true
@@ -77,12 +81,37 @@ resource "aws_secretsmanager_secret_version" "admin" {
   secret_string = jsonencode({
     email = var.admin_email
     # 직접 정한 값이 있으면 그걸, 없으면 자동 생성값을 쓴다.
-    #
-    # ⚠ apply 하는 사람이 admin_password 를 안 가지고 있으면 자동 생성값으로 되돌아간다.
-    #   secrets.auto.tfvars 는 git 에 없으므로 다른 팀원 머신에는 그 파일이 없다.
-    #   (google_client_secret 도 똑같은 성질이다 — 이 저장소가 원래 쓰는 방식이다)
+    # 단 이 값은 "최초 생성 시점"에만 쓰인다 — 아래 ignore_changes 참고.
     password = coalesce(var.admin_password, random_password.admin.result)
   })
+
+  lifecycle {
+    # 한 번 만들어진 뒤로는 terraform 이 이 값을 다시 쓰지 않는다.
+    #
+    # 왜 필요한가: admin_password 는 secrets.auto.tfvars(git 에 없음)나 환경변수로만
+    # 넘어온다. 그 값을 가지고 있지 않은 팀원이 전체 apply 를 하면 coalesce 가
+    # null 로 떨어져 자동 생성 비밀번호로 "조용히" 되돌아가고, 그 사람은 자기가
+    # 남의 로그인을 깼다는 사실조차 모른다.
+    #
+    # ignore_changes 를 걸면 그 경로가 막힌다. 비밀번호를 가진 사람이 한 번 정하면
+    # 이후 누가 apply 하든 값이 유지된다. 공유할 것도, 맞출 것도 없다.
+    #
+    # 대가: terraform 으로는 비밀번호를 못 바꾼다. secrets.auto.tfvars 를 고쳐도
+    # plan 에 안 잡힌다. 바꾸려면 아래 둘 중 하나를 쓴다.
+    #
+    #   방법 1) 값만 직접 갱신 (권장)
+    #     aws secretsmanager put-secret-value --secret-id cloud-duck/admin/credentials \
+    #       --region ap-northeast-2 \
+    #       --secret-string '{"email":"admin@cloudduck.cloud","password":"새비밀번호"}'
+    #
+    #   방법 2) terraform 이 다시 쓰게 만들기 (secrets.auto.tfvars 값을 반영하고 싶을 때)
+    #     terraform apply -replace=aws_secretsmanager_secret_version.admin
+    #
+    # 어느 쪽이든 warmup 이 부팅할 때만 시드하므로 태스크 재시작이 필요하다:
+    #   aws ecs update-service --cluster tf-cluster --service clduck-web   --force-new-deployment --region ap-northeast-2
+    #   aws ecs update-service --cluster tf-cluster --service clduck-admin --force-new-deployment --region ap-northeast-2
+    ignore_changes = [secret_string]
+  }
 }
 
 locals {
