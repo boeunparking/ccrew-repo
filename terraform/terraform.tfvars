@@ -4,9 +4,14 @@
 #
 # CI(deploy.yml)는 이 값을 안 읽고 커밋 SHA를 -var 로 직접 넘긴다. 즉 CI가 배포하면
 # 실제 떠 있는 이미지와 이 파일이 어긋난다 — 그 상태로 로컬에서 전체 apply를 하면
-# 이미지가 옛 버전으로 되돌아간다. CI 배포 후에는 이 두 줄도 그 SHA로 맞춰둘 것.
-image_tag_web         = "5261282134bbb2b4c772be5980433b9c9866b130"
-image_tag_batch       = "5261282134bbb2b4c772be5980433b9c9866b130"
+# 이미지가 옛 버전으로 되돌아간다.
+#
+# 그래서 deploy.yml 의 sync-image-tag 잡이 배포 성공 후 이 두 줄을 자동으로 갱신하고
+# main 에 커밋한다. 이 워크플로우의 트리거 경로는 web/** 와 batch/** 뿐이라
+# 이 파일만 바뀐 커밋은 워크플로우를 다시 부르지 않는다(무한 루프 없음).
+# 즉 평소엔 손댈 일이 없고, CI 없이 로컬에서만 배포할 때만 직접 맞춘다.
+image_tag_web         = "9d5c6151fd03b7ade9bab45e8b7842faede75d9b"
+image_tag_batch       = "9d5c6151fd03b7ade9bab45e8b7842faede75d9b"
 certificate_arn       = "arn:aws:acm:ap-northeast-2:033177021117:certificate/92a3fd3f-214c-48e7-ba9d-e5fa48c53ce4"
 certificate_arn_tokyo = "arn:aws:acm:ap-northeast-1:033177021117:certificate/0518d7cb-9497-4af9-b6f4-7940a9edd525" # cloudduck.cloud (도쿄 리전 발급분, ISSUED)
 # github_org / github_repo 는 terraform-bootstrap 으로 옮겨졌다 (GitHub OIDC/IAM 롤과 함께).

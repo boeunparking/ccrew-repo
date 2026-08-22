@@ -109,10 +109,14 @@ resource "aws_route_table_association" "ecs" {
   route_table_id = module.pri_rt.rt_id
 }
 
+# NAT 게이트웨이는 gateway_id 가 아니라 nat_gateway_id 로 지정해야 한다.
+# gateway_id 에 nat-xxx 를 넣어도 라우팅은 동작하지만, AWS 가 이 값을 nat_gateway_id 로
+# 돌려주기 때문에 refresh 마다 "코드는 gateway_id, 실제는 nat_gateway_id" 로 어긋난다.
+# 그러면 apply 해도 다음 plan 에 또 뜨는 영구 diff 가 된다(서울/도쿄 각각 1개씩).
 resource "aws_route" "pri_default" {
   route_table_id         = module.pri_rt.rt_id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_nat_gateway.nat_gw.id
+  nat_gateway_id         = aws_nat_gateway.nat_gw.id
   depends_on             = [aws_nat_gateway.nat_gw]
 }
 

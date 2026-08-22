@@ -100,3 +100,46 @@ jobs:
         # github_org / github_repo 는 더 이상 넘기지 않는다 — GitHub OIDC/IAM 롤이
         # terraform-bootstrap 으로 분리되면서 메인 스택에 그 변수 선언이 없어졌다.
         # 그대로 두면 "Value for undeclared variable" 에러로 apply 자체가 실패한다.
+
+  # 위 deploy 잡은 -var 로 커밋 SHA를 넘기므로 terraform.tfvars 는 그대로 남는다.
+  # 그 상태로 누가 로컬에서 전체 apply를 하면 tfvars의 옛 태그가 이겨서 방금 배포한
+  # 이미지가 조용히 롤백된다. 그래서 배포가 성공한 뒤 tfvars를 실제 배포된 값으로 맞춰 커밋한다.
+  #
+  # 무한 루프가 생기지 않는 이유: 이 워크플로우의 트리거 경로는 web/** 와 batch/** 뿐이라
+  # terraform/terraform.tfvars 만 바뀐 이 커밋은 워크플로우를 다시 부르지 않는다.
+  sync-image-tag:
+    # deploy 까지 성공해야 돈다 — 배포가 실패했는데 tfvars만 갱신되면
+    # "파일은 새 이미지, 실제로 떠 있는 건 옛 이미지"라는 더 나쁜 어긋남이 된다.
+    needs: [build-and-push, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 잡 단위 override. 이 잡은 AWS를 안 쓰므로 id-token 은 필요 없다.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Sync image tags in terraform.tfvars
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          sed -i -E "s|^(image_tag_web[[:space:]]*=[[:space:]]*).*|\1\"$IMAGE_TAG\"|"   terraform/terraform.tfvars
+          sed -i -E "s|^(image_tag_batch[[:space:]]*=[[:space:]]*).*|\1\"$IMAGE_TAG\"|" terraform/terraform.tfvars
+
+          # sed 가 아무것도 못 바꿨는데 조용히 성공하는 걸 막는다 —
+          # 변수명이 바뀌거나 줄 형식이 달라지면 여기서 잡힌다.
+          grep -q "^image_tag_web[[:space:]]*=[[:space:]]*\"$IMAGE_TAG\"" terraform/terraform.tfvars \
+            || { echo "image_tag_web 치환 실패 — terraform.tfvars 형식을 확인할 것"; exit 1; }
+
+          if git diff --quiet -- terraform/terraform.tfvars; then
+            echo "이미 동기화되어 있음 — 커밋할 것 없음"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add terraform/terraform.tfvars
+          git commit -m "chore(tf): 배포된 이미지 태그 동기화 ($IMAGE_TAG)"
+          # 이 잡이 도는 사이 main 에 다른 푸시가 들어왔을 수 있다.
+          git pull --rebase origin main
+          git push origin HEAD:main

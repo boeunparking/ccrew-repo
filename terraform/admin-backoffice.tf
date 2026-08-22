@@ -56,12 +56,11 @@ module "admin_service" {
   task_role_arn      = module.ecs_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.admin.name
 
+  # web_service 와 완전히 동일한 설정을 쓴다 — 같은 이미지로 같은 app.js 를 부팅하므로
+  # 앱이 요구하는 값도 같다. 정의는 compute.tf 의 locals 한 곳에만 있다.
   container_port = 3000
-  environment = [
-    { name = "ENV", value = "production" },
-    { name = "UPLOAD_BUCKET", value = module.s3.source_bucket_name },
-    { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
-  ]
+  environment    = local.seoul_web_environment
+  secrets        = local.seoul_web_secrets
 
   desired_count     = 1
   capacity_provider = "FARGATE_SPOT" # launch_type 안 주면 100% Spot

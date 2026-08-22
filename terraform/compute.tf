@@ -212,6 +212,32 @@ resource "aws_ecs_cluster_capacity_providers" "tf_ccp_tokyo" {
   }
 }
 
+# web 이미지(tf-web-ecr)를 쓰는 서울 서비스들이 공유하는 컨테이너 설정.
+#
+# web_service 와 admin_service 는 같은 이미지를 띄우고(admin 은 /admin 라우트만 따로
+# Spot 으로 분리한 것) 같은 app.js 를 부팅하므로 앱이 요구하는 환경변수/시크릿이 동일하다.
+# 예전에 admin_service 쪽에만 DB_* 와 secrets 가 통째로 빠져 있어서, 앱이 DB_HOST 를
+# 못 찾고 127.0.0.1:3306 으로 폴백해 warmup 이 ECONNREFUSED 로 계속 실패했다.
+# 두 곳에 나눠 적으면 반드시 다시 어긋나므로 여기 한 곳에서만 정의한다.
+locals {
+  seoul_web_environment = concat([
+    { name = "ENV", value = "production" },
+    { name = "UPLOAD_BUCKET", value = module.s3.source_bucket_name },
+    # 앱 코드는 REDIS_URL이라는 이름을 읽지만 실제 엔진은 Valkey(Redis 프로토콜 호환)다.
+    # transit_encryption_enabled=true라서 TLS 스킴(rediss://)이 필수.
+    { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
+    # db.js가 host/port/db name을 따로 읽는다 — endpoint는 "host:port"라 그대로 못 씀.
+    { name = "DB_HOST", value = module.rds_seoul.db_address },
+    { name = "DB_PORT", value = "3306" },
+    { name = "DB_NAME", value = "cloud_duck" },
+  ], local.web_oauth_environment)
+
+  seoul_web_secrets = concat([
+    { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
+    { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
+  ], local.web_auth_secrets_seoul, local.web_admin_secrets)
+}
+
 # Task Definition - Web (Fargate)
 # subnets / security_groups 전부 region_stack(module.seoul) 출력값으로 연결
 module "web_service" {
@@ -227,22 +253,8 @@ module "web_service" {
   log_group          = aws_cloudwatch_log_group.web.name
 
   container_port = 3000
-  environment = concat([
-    { name = "ENV", value = "production" },
-    { name = "UPLOAD_BUCKET", value = module.s3.source_bucket_name },
-    # 앱 코드는 REDIS_URL이라는 이름을 읽지만 실제 엔진은 Valkey(Redis 프로토콜 호환)다.
-    # transit_encryption_enabled=true라서 TLS 스킴(rediss://)이 필수.
-    { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
-    # db.js가 host/port/db name을 따로 읽는다 — endpoint는 "host:port"라 그대로 못 씀.
-    { name = "DB_HOST", value = module.rds_seoul.db_address },
-    { name = "DB_PORT", value = "3306" },
-    { name = "DB_NAME", value = "cloud_duck" },
-  ], local.web_oauth_environment)
-
-  secrets = concat([
-    { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
-    { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
-  ], local.web_auth_secrets_seoul, local.web_admin_secrets)
+  environment    = local.seoul_web_environment
+  secrets        = local.seoul_web_secrets
 
   desired_count                 = 2
   launch_type                   = "FARGATE"
