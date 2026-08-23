@@ -12,9 +12,9 @@
 # 실행 방법 (수동, CI 자동화 아님 — state 버킷은 사람이 직접 관리):
 #   cd terraform-bootstrap
 #   terraform init
-#   terraform import aws_s3_bucket.clduck_state ccrew-033177021117-ap-northeast-2-an
-#   terraform import aws_s3_bucket_server_side_encryption_configuration.clduck_state ccrew-033177021117-ap-northeast-2-an
-#   terraform import aws_s3_bucket_public_access_block.clduck_state ccrew-033177021117-ap-northeast-2-an
+#   terraform import aws_s3_bucket.clduck_state ccrew-bootstrap
+#   terraform import aws_s3_bucket_server_side_encryption_configuration.clduck_state ccrew-bootstrap
+#   terraform import aws_s3_bucket_public_access_block.clduck_state ccrew-bootstrap
 #   terraform plan   # 변경사항 없어야 정상
 ############################################################
 
@@ -38,7 +38,7 @@ provider "aws" {
 # 다른 팀(ccrew-tf 본체)도 같이 쓰는 공용 버킷이라 이름은 그대로 유지, clduck/ 접두사로만
 # 격리해서 쓴다 (terraform/main.tf의 backend 설정 참고).
 resource "aws_s3_bucket" "clduck_state" {
-  bucket = "ccrew-033177021117-ap-northeast-2-an"
+  bucket = "ccrew-bootstrap"
 
   lifecycle {
     prevent_destroy = true # 실수로 destroy 못 하게 — state 버킷이 사라지면 전체 인프라 관리 불능이 됨

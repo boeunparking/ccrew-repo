@@ -46,7 +46,7 @@ locals {
   ecs_task_role_arn      = "arn:aws:iam::${local.account_id}:role/ecs-task-role"
   worker_task_role_arn   = "arn:aws:iam::${local.account_id}:role/worker-task-role"
 
-  state_bucket = "ccrew-033177021117-ap-northeast-2-an"
+  state_bucket = "ccrew-bootstrap"
 
   frontend_bucket_name = "cloud-duck-frontend-apne2"
   frontend_bucket_arn  = "arn:aws:s3:::${local.frontend_bucket_name}"
