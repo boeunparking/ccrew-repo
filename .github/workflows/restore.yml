@@ -47,7 +47,6 @@ env:
   AWS_REGION: ap-northeast-2
   TF_VERSION: '1.15.7'
   TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-  TF_VAR_kakao_client_secret: ${{ secrets.KAKAO_CLIENT_SECRET }}
 
 jobs:
   restore:

@@ -14,7 +14,7 @@ import { ensureSchema } from './schema.js';
 
 const DB_NAME = process.env.DB_NAME ?? 'cloud_duck';
 
-const EXPECTED = ['users', 'user_identities', 'auctions', 'auction_images', 'bids'];
+const EXPECTED = ['users', 'auctions', 'auction_images', 'bids'];
 
 async function main() {
   console.log(`[1] 첫 실행 — 데이터베이스와 테이블 생성 (${DB_NAME})`);
@@ -37,18 +37,11 @@ async function main() {
   console.log('[tables]', tables);
   if (missing.length) throw new Error(`빠진 테이블: ${missing.join(', ')}`);
 
-  // 소셜 전용 계정은 비밀번호가 없다 — NULL이 들어가야 한다
-  const [cols] = await conn.query('SHOW COLUMNS FROM users LIKE ?', ['password_hash']);
-  console.log('[users.password_hash]', cols[0].Null === 'YES' ? 'NULL 허용 ✅' : `NOT NULL ❌`);
-  if (cols[0].Null !== 'YES') throw new Error('password_hash가 NOT NULL이면 소셜 가입이 실패한다');
-
-  // 같은 소셜 계정이 우리 계정 두 개에 붙는 걸 막는 제약
-  const [idx] = await conn.query('SHOW INDEX FROM user_identities');
-  const uniques = [...new Set(idx.filter((i) => i.Non_unique === 0).map((i) => i.Key_name))];
-  console.log('[user_identities UNIQUE]', uniques);
-  for (const key of ['uq_identity', 'uq_user_provider']) {
-    if (!uniques.includes(key)) throw new Error(`${key} 제약이 없다`);
-  }
+  // 회원가입/로그인은 Cognito가 처리한다 — users.id는 Cognito sub를 그대로 담는
+  // 프로필 사본일 뿐이라 email이 UNIQUE인지만 확인하면 충분하다.
+  const [idx] = await conn.query('SHOW INDEX FROM users WHERE Column_name = ?', ['email']);
+  console.log('[users.email UNIQUE]', idx.some((i) => i.Non_unique === 0) ? '있음 ✅' : '없음 ❌');
+  if (!idx.some((i) => i.Non_unique === 0)) throw new Error('users.email UNIQUE 제약이 없다');
 
   await conn.end();
   console.log('\n✅ 스키마 자동생성 정상 — 재실행해도 안전하다');

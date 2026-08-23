@@ -78,11 +78,13 @@ env:
   # 여기서 다시 넘길 필요가 없다(넘겨도 tfvars 가 이겨서 효과도 없다).
   #
   # 반면 client_secret 류는 secrets.auto.tfvars 에 있고 그 파일은 추적되지 않는다.
-  # CI 에는 존재하지 않으므로 이 두 개만 GitHub Secrets 에서 가져온다.
+  # CI 에는 존재하지 않으므로 이 값만 GitHub Secrets 에서 가져온다.
   # (CI 에는 auto.tfvars 가 없으니 TF_VAR_ 로도 충분히 이긴다.)
+  #
+  # 카카오는 없어졌다 — 회원/소셜 로그인이 Cognito User Pool 로 넘어갔고, Cognito 가
+  # 기본 지원하는 IdP 가 아니라 뺐다(terraform/cognito.tf). KAKAO_REST_API_KEY /
+  # KAKAO_CLIENT_SECRET 은 더 이상 참조되지 않으므로 GitHub 에서 지워도 된다.
   TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-  # 카카오 콘솔에서 client_secret 을 '사용함'으로 켠 경우에만 채운다. 안 켰으면 빈 값이 정상.
-  TF_VAR_kakao_client_secret: ${{ secrets.KAKAO_CLIENT_SECRET }}
 
 jobs:
   # ──────────────────────────────────────────────────────────────
@@ -91,10 +93,11 @@ jobs:
   # Secrets 가 없어도 ${{ secrets.X }} 는 에러가 아니라 빈 문자열이 된다.
   # AWS_ACCOUNT_ID 가 비면 role ARN 이 arn:aws:iam:::role/... 로 조립돼
   # "왜 OIDC 가 안 되지" 를 한참 찾게 되고, GOOGLE_CLIENT_SECRET 이 비면
-  # 20분 걸리는 전체 apply 를 끝까지 돌린 뒤 변수 validation 에서 죽는다.
+  # 20분 걸리는 전체 apply 를 끝까지 돌린 뒤 cognito.tf 의 변수 validation 에서 죽는다.
   # 30초짜리 잡 하나로 둘 다 앞당겨 잡는다.
   #
-  # 나머지 값(인증서 ARN 등)은 terraform.tfvars 가 저장소에 있으므로 검사하지 않는다.
+  # 나머지 값(인증서 ARN, google_client_id 등)은 terraform.tfvars 가 저장소에 있으므로
+  # 검사하지 않는다.
   # ──────────────────────────────────────────────────────────────
   preflight:
     runs-on: ubuntu-latest

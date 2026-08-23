@@ -10,37 +10,16 @@
 -- 그때는 db/migrations/ 에 ALTER 문을 따로 쓴다.
 
 -- ========================================
--- users: 회원가입/로그인 + 소셜 로그인 (routes/authRoutes.js, routes/oauthRoutes.js)
+-- users: Cognito가 인증한 사용자의 프로필 사본 (routes/authRoutes.js)
 -- ========================================
+-- 회원가입/로그인/소셜 연동은 전부 Cognito User Pool이 처리한다. 여기 있는 id는
+-- Cognito의 sub(UUID)을 그대로 쓰고, auctions.seller_id/bids.user_id가 이 테이블을
+-- FK로 참조하기 때문에만 존재한다 — authMiddleware.js가 인증된 요청마다 upsert한다.
 CREATE TABLE IF NOT EXISTS users (
-  id            CHAR(36)     PRIMARY KEY,        -- crypto.randomUUID()
-  email         VARCHAR(255) NOT NULL UNIQUE,     -- 로그인 아이디로도 씀
-  password_hash VARCHAR(255) NULL,                -- bcrypt.hash 결과. 소셜 전용 계정은 NULL
+  id            CHAR(36)     PRIMARY KEY,        -- Cognito sub
+  email         VARCHAR(255) NOT NULL UNIQUE,
   nickname      VARCHAR(50)  NOT NULL,
-  role          VARCHAR(20)  NOT NULL DEFAULT 'user',  -- 'user' | 'admin'
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- ========================================
--- user_identities: 소셜 계정 연결 (routes/oauthRoutes.js)
--- ========================================
--- 한 계정에 구글·카카오를 둘 다 붙일 수 있어서 users와 1:N으로 뺐다.
--- 공급자가 주는 provider_user_id는 이메일과 달리 바뀌지 않으므로
--- "누구인가"는 항상 이 값으로 판단한다.
-CREATE TABLE IF NOT EXISTS user_identities (
-  id               CHAR(36)     PRIMARY KEY,
-  user_id          CHAR(36)     NOT NULL,
-  provider         VARCHAR(20)  NOT NULL,        -- 'google' | 'kakao'
-  provider_user_id VARCHAR(255) NOT NULL,        -- google: sub, kakao: id
-  email            VARCHAR(255),                 -- 연결 당시 공급자가 알려준 값(참고용)
-  created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-  -- 같은 소셜 계정이 서로 다른 우리 계정 두 개에 붙는 걸 막는다
-  UNIQUE KEY uq_identity (provider, provider_user_id),
-  -- 한 사용자가 같은 공급자를 중복 연결하는 것도 막는다
-  UNIQUE KEY uq_user_provider (user_id, provider),
-
-  FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 -- ========================================
@@ -58,6 +37,10 @@ CREATE TABLE IF NOT EXISTS auctions (
   seller_id     CHAR(36)     NOT NULL,
   tag           VARCHAR(20),                      -- 'NEW', '마감임박' 등
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- Rekognition이 이미지를 REJECTED로 판정하면 채워진다 (terraform/modules/lambda/image_moderation).
+  -- NULL이 아니면 공개 목록/상세에서 제외된다 (store.js listAuctions/getAuctionById).
+  hidden_at     DATETIME     NULL,
+  hidden_reason VARCHAR(255) NULL,
 
   KEY idx_auctions_seller_id (seller_id),
   FOREIGN KEY (seller_id) REFERENCES users(id)
@@ -65,12 +48,29 @@ CREATE TABLE IF NOT EXISTS auctions (
 
 -- 상품 이미지 (auctions.images 배열 → 별도 테이블로 분리)
 CREATE TABLE IF NOT EXISTS auction_images (
-  id          CHAR(36)  PRIMARY KEY,
-  auction_id  CHAR(36)  NOT NULL,
-  image_key   VARCHAR(500) NOT NULL,   -- S3 key
-  sort_order  INT       NOT NULL DEFAULT 0,
+  id                 CHAR(36)  PRIMARY KEY,
+  auction_id         CHAR(36)  NOT NULL,
+  image_key          VARCHAR(500) NOT NULL,   -- S3 key
+  sort_order         INT       NOT NULL DEFAULT 0,
+  -- 'PENDING' | 'APPROVED' | 'REJECTED' — image_moderation Lambda가 채운다.
+  -- 업로드 직후 auctions API가 이미지를 먼저 걸고, Rekognition 판정은 비동기로
+  -- 뒤늦게 오므로 기본값은 PENDING이다.
+  moderation_status  VARCHAR(20)  NOT NULL DEFAULT 'PENDING',
+  moderation_labels  VARCHAR(255) NULL,
+  moderated_at       DATETIME     NULL,
 
   FOREIGN KEY (auction_id) REFERENCES auctions(id)
+);
+
+-- 이미지가 REJECTED로 판정될 때 아직 auction_images 행이 없을 수 있다 —
+-- 업로드(S3 presign)는 경매 생성보다 먼저 일어나고, Rekognition은 보통 그 사이의
+-- 짧은 창(사용자가 나머지 폼을 채우는 동안) 안에 끝나기 때문이다. 그래서 판정 결과를
+-- image_key만으로 독립적으로 남겨두고, createAuction()이 경매를 만들 때 이 테이블을
+-- 조회해서 즉시 반영한다 (web/src/store.js).
+CREATE TABLE IF NOT EXISTS image_moderation_rejections (
+  image_key   VARCHAR(500) PRIMARY KEY,
+  labels      VARCHAR(255),
+  rejected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ========================================

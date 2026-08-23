@@ -23,20 +23,17 @@ vpn_server_cert_arn = "arn:aws:acm:ap-northeast-2:033177021117:certificate/bb746
 vpn_client_root_cert_arn = "arn:aws:acm:ap-northeast-2:033177021117:certificate/7c1e8db5-2305-4c7f-aeec-798798128e94"
 alarm_email              = "ccrewduck@gmail.com"
 
-# ---- 소셜 로그인 (oauth.tf) ----
-# 이 두 개는 인가 URL에 실려 브라우저로 나가는 공개값이라 여기 적어도 된다.
+# ---- 구글 로그인 (cognito.tf, Cognito Identity Provider) ----
+# client_id는 인가 URL에 실려 브라우저로 나가는 공개값이라 여기 적어도 된다.
 # client_secret 은 절대 여기 적지 말 것 — 이 파일은 git에 추적 중이다.
-#   CI: GitHub Actions Secrets 의 GOOGLE_CLIENT_SECRET (deploy.yml 이 -var 로 넘김)
+#   CI: GitHub Actions Secrets 의 GOOGLE_CLIENT_SECRET
+#       (deploy.yml 이 TF_VAR_google_client_secret 환경변수로 넘긴다. 이 파일에
+#        google_client_secret 이 없으므로 TF_VAR_ 로도 충분히 이긴다)
 #
 # 로컬 apply: GitHub Secrets 는 값을 되읽을 수 없다(설계상 write-only).
-# 대신 최초 apply 때 terraform 이 Secrets Manager 에 넣어둔 값을 그대로 꺼내 쓴다 —
-# 같은 값이 되돌아가므로 apply 에 시크릿 변경사항이 잡히지 않는다.
+# 대신 최초 apply 때 terraform 이 Cognito Identity Provider에 넣어둔 값을 그대로
+# 꺼내 쓴다 — 같은 값이 되돌아가므로 apply 에 시크릿 변경사항이 잡히지 않는다.
 #
-#   $env:TF_VAR_google_client_secret = (aws secretsmanager get-secret-value `
-#     --secret-id cloud-duck/app/auth --region ap-northeast-2 `
-#     --query "SecretString" --output text | ConvertFrom-Json).google_client_secret
-#
-# 아직 한 번도 apply 한 적이 없다면 이 방법이 안 되므로, 구글 콘솔에서 값을 받아
+# 아직 한 번도 apply 한 적이 없다면 구글 콘솔에서 값을 받아
 # $env:TF_VAR_google_client_secret = 'GOCSPX-...' 로 직접 넣는다.
-google_client_id   = "759497431576-f28o4ll26bpc9bs3t2t208rfq3sb4q3g.apps.googleusercontent.com"
-kakao_rest_api_key = "06d67e103df91a606ae16d88df5c6b34"
+google_client_id = "759497431576-f28o4ll26bpc9bs3t2t208rfq3sb4q3g.apps.googleusercontent.com"

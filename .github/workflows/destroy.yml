@@ -45,7 +45,6 @@ env:
   # destroy 도 plan 을 거치므로 변수 validation 이 그대로 돈다.
   # google_client_secret 은 빈 값을 거부하도록 돼 있어서 안 넘기면 destroy 가 시작도 못 한다.
   TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-  TF_VAR_kakao_client_secret: ${{ secrets.KAKAO_CLIENT_SECRET }}
 
 jobs:
   destroy:

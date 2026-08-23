@@ -12,11 +12,11 @@ async function main() {
   const [tables] = await pool.query('SHOW TABLES');
   console.log('[tables]', tables.map((t) => Object.values(t)[0]));
 
-  // 간단히 users에 한 명 넣고 다시 읽어본다
+  // 간단히 users에 한 명 넣고 다시 읽어본다 (Cognito sub 대신 UUID로 대체)
   const testEmail = `dev-test-${Date.now()}@example.com`;
   await pool.query(
-    'INSERT INTO users (id, email, password_hash, nickname, role) VALUES (UUID(), ?, ?, ?, ?)',
-    [testEmail, 'dummy-hash', 'devtester', 'user'],
+    'INSERT INTO users (id, email, nickname) VALUES (UUID(), ?, ?)',
+    [testEmail, 'devtester'],
   );
   const [rows] = await pool.query('SELECT id, email, nickname FROM users WHERE email = ?', [testEmail]);
   console.log('[insert+select]', rows[0]);
