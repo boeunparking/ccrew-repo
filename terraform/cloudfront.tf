@@ -16,7 +16,7 @@ resource "aws_s3_bucket" "frontend" {
   tags = { Name = "${var.project}-frontend" }
   
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
