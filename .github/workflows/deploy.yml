@@ -309,6 +309,48 @@ jobs:
           echo "dist=$dist"     >> "$GITHUB_OUTPUT"
           echo "버킷=$bucket / 배포=$dist"
 
+      # 회원가입·로그인은 브라우저가 Cognito를 직접 호출한다(ccrew-frontend/src/lib/cognito.js).
+      # 그래서 user pool id / client id / 도메인이 프론트에 들어가야 하는데, 셋 다 AWS 가
+      # 생성 시점에 부여하는 값이라 소스에 적어 둘 수가 없다 — 적어 두면 재구축으로 값이
+      # 바뀌는 순간 빌드는 초록불인데 로그인만 조용히 깨진다.
+      # 그래서 terraform 이 SSM 에 써 두고(terraform/cognito.tf) 여기서 읽어 넣는다.
+      # 버킷 이름·배포 ID 와 똑같은 방식이다.
+      #
+      # 빌드가 끝난 뒤 dist/config.js 를 덮어쓰는 이유: vite 환경변수는 빌드 시점에
+      # 번들에 박혀서 같은 산출물을 다른 환경에 못 올린다. config.js 는 index.html 이
+      # 번들보다 먼저 읽는 런타임 설정이라 나중에 갈아끼울 수 있다.
+      #
+      # 셋 다 브라우저 번들에 그대로 노출되는 공개값이다(앱 클라이언트에 시크릿이 없다).
+      - name: 런타임 설정 생성 (dist/config.js)
+        run: |
+          pool=$(aws ssm get-parameter   --name /cloud-duck/frontend/cognito_user_pool_id --query Parameter.Value --output text)
+          client=$(aws ssm get-parameter --name /cloud-duck/frontend/cognito_client_id    --query Parameter.Value --output text)
+          domain=$(aws ssm get-parameter --name /cloud-duck/frontend/cognito_domain       --query Parameter.Value --output text)
+
+          # 하나라도 비면 로그인 화면이 "설정이 안 됐다"만 띄우는 상태로 배포된다.
+          # 그 상태를 사용자에게 내보내느니 여기서 멈추는 게 낫다.
+          for pair in "cognito_user_pool_id=$pool" "cognito_client_id=$client" "cognito_domain=$domain"; do
+            [ -n "${pair#*=}" ] && [ "${pair#*=}" != "None" ] || {
+              echo "::error::SSM 의 ${pair%%=*} 가 비어 있다 — infra 잡이 cognito.tf 까지 apply 했는지 확인할 것."
+              exit 1
+            }
+          done
+
+          cat > dist/config.js <<EOF
+          // 이 파일은 배포 시점에 .github/workflows/deploy.yml 이 생성한다.
+          // 저장소의 public/config.js 는 로컬 개발용 기본값일 뿐이다.
+          window.__CCREW_CONFIG__ = {
+            apiBaseUrl: 'https://api.cloudduck.cloud',
+            cognito: {
+              userPoolId: '$pool',
+              clientId: '$client',
+              domain: '$domain',
+            },
+          };
+          EOF
+
+          echo "config.js 생성 완료 (pool=$pool)"
+
       # 캐시 수명이 정반대라 두 번에 나눈다.
       #   assets/*  : vite 가 파일명에 콘텐츠 해시를 박는다. 내용이 바뀌면 이름이
       #               바뀌므로 영구 캐시해도 낡지 않는다.

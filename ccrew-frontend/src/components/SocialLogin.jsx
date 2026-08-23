@@ -1,54 +1,47 @@
-import { useEffect, useState } from 'react'
-import { api } from '../lib/api.js'
+import { useState } from 'react'
+import { startGoogleLogin } from '../lib/cognito.js'
+import { IS_COGNITO_CONFIGURED } from '../lib/config.js'
 
-// 브랜드 가이드상 각 버튼 색은 고정이다 (카카오 #FEE500, 구글은 흰 바탕 + 회색 테두리).
-const STYLE = {
-  google: { background: '#fff', color: '#3c4043', border: '1px solid #dadce0' },
-  kakao: { background: '#FEE500', color: '#191600', border: 'none' },
-}
-
-const LABEL = {
-  google: 'Google로 계속하기',
-  kakao: '카카오로 계속하기',
+// 브랜드 가이드상 구글 버튼은 흰 바탕 + 회색 테두리로 고정이다.
+const GOOGLE_STYLE = {
+  background: '#fff',
+  color: '#3c4043',
+  border: '1px solid #dadce0',
 }
 
 /**
- * 소셜 로그인 버튼 묶음.
+ * 소셜 로그인 버튼.
  *
- * 어떤 버튼을 그릴지는 백엔드가 정한다 — 환경변수에 키가 안 들어간 공급자는
- * 목록에서 빠지므로, 눌렀는데 404가 나는 버튼이 화면에 남지 않는다.
+ * 예전에는 백엔드에 `/auth/oauth/providers`를 물어 어떤 버튼을 그릴지 정했다.
+ * 지금은 공급자가 Cognito User Pool에 붙어 있고(terraform/cognito.tf) 구글 하나뿐이라
+ * 물어볼 것이 없다. 카카오는 Cognito가 기본 지원하는 IdP가 아니라 제거됐다.
  *
  * @param {string} redirectPath 로그인 후 돌아갈 프론트 내부 경로
  */
 export default function SocialLogin({ redirectPath = '/' }) {
-  const [providers, setProviders] = useState([])
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    api
-      .oauthProviders()
-      .then((d) => setProviders(d.providers ?? []))
-      .catch((e) => setError(e.message))
-  }, [])
-
-  // 서버에 못 닿은 것과 "켜진 공급자가 없는 것"은 다르다.
-  // 전자를 조용히 감추면 소셜 로그인 기능이 아예 없는 것처럼 보여서 원인을 못 찾는다.
-  if (error) {
+  // 설정이 비어 있으면 눌러도 Cognito 주소를 만들 수 없다.
+  // 버튼을 감추는 것과 "구글 로그인이 원래 없는 것"은 화면에서 구분이 안 되므로,
+  // 원인을 적어 둔다 — 사용자가 다시 눌러서 풀릴 문제가 아니다.
+  if (!IS_COGNITO_CONFIGURED) {
     return (
       <div style={{ marginTop: 22, fontSize: 12, color: '#8a8a8a', textAlign: 'center', lineHeight: 1.6 }}>
-        소셜 로그인 사용 가능 여부를 확인하지 못했습니다.
+        구글 로그인을 사용할 수 없습니다.
         <br />
-        <span style={{ fontSize: 11 }}>{error}</span>
+        <span style={{ fontSize: 11 }}>로그인 설정(Cognito)이 배포되지 않았습니다</span>
       </div>
     )
   }
 
-  // 여기는 서버가 "켜진 공급자 없음"이라고 답한 경우다. 이땐 조용히 감추는 게 맞다.
-  if (!providers.length) return null
-
-  // fetch가 아니라 페이지 이동이다 — 백엔드가 302로 동의 화면에 넘긴다.
-  const start = (provider) => {
-    window.location.href = api.oauthStartUrl(provider, redirectPath)
+  const start = async () => {
+    setError('')
+    try {
+      // fetch가 아니라 페이지 이동이다 — 구글 동의 화면은 XHR로 못 띄운다(CORS).
+      await startGoogleLogin(redirectPath)
+    } catch (e) {
+      setError(e.message)
+    }
   }
 
   return (
@@ -69,25 +62,28 @@ export default function SocialLogin({ redirectPath = '/' }) {
         <span style={{ flex: 1, height: 1, background: '#e5e5e5' }} />
       </div>
 
-      {providers.map((p) => (
-        <button
-          key={p}
-          type="button"
-          onClick={() => start(p)}
-          style={{
-            width: '100%',
-            padding: 12,
-            marginBottom: 8,
-            fontSize: 12.5,
-            fontWeight: 600,
-            fontFamily: 'inherit',
-            cursor: 'pointer',
-            ...(STYLE[p] ?? STYLE.google),
-          }}
-        >
-          {LABEL[p] ?? `${p}로 계속하기`}
-        </button>
-      ))}
+      <button
+        type="button"
+        onClick={start}
+        style={{
+          width: '100%',
+          padding: 12,
+          marginBottom: 8,
+          fontSize: 12.5,
+          fontWeight: 600,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+          ...GOOGLE_STYLE,
+        }}
+      >
+        Google로 계속하기
+      </button>
+
+      {error && (
+        <div style={{ fontSize: 11.5, color: '#c0392b', textAlign: 'center', marginTop: 6 }}>
+          {error}
+        </div>
+      )}
     </div>
   )
 }

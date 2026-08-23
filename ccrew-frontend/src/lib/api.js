@@ -2,14 +2,16 @@
 // 경로 기반(/api/*)이 아니라 서브도메인 기반이므로 모든 요청이 교차 출처다.
 // 주소는 config.js가 정하고(런타임 교체 가능), 여기서는 경로만 신경 쓴다.
 import { API_BASE_URL } from './config.js';
+import { getIdToken, isLoggedIn, logout as cognitoLogout } from './cognito.js';
 
-const TOKEN_KEY = 'cd_token';
-
+/**
+ * 토큰은 이제 이 파일이 직접 들고 있지 않다 — 발급도 갱신도 Cognito 쪽이고,
+ * 보관은 lib/cognito.js의 tokenStore 한 곳으로 모았다.
+ * 여기서는 기존 호출부가 쓰던 모양만 유지한다.
+ */
 export const auth = {
-  get: () => localStorage.getItem(TOKEN_KEY),
-  set: (t) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
-  isLoggedIn: () => Boolean(localStorage.getItem(TOKEN_KEY)),
+  isLoggedIn,
+  clear: cognitoLogout,
 };
 
 /**
@@ -30,7 +32,9 @@ async function request(path, { method = 'GET', body, auth: needAuth = false } = 
   if (body) headers['Content-Type'] = 'application/json';
 
   if (needAuth) {
-    const token = auth.get();
+    // ID 토큰은 60분이면 만료된다. getIdToken()이 만료가 임박했으면 먼저 갱신하고,
+    // 갱신도 불가능하면 null을 준다 — 그 경우 요청을 보내봤자 401이므로 여기서 끊는다.
+    const token = await getIdToken();
     if (!token) throw apiError('로그인이 필요합니다');
     headers.Authorization = `Bearer ${token}`;
   }
@@ -52,10 +56,10 @@ async function request(path, { method = 'GET', body, auth: needAuth = false } = 
 
   // 401을 "세션 만료"로 해석해도 되는 건 우리가 토큰을 보낸 요청뿐이다.
   //
-  // 토큰을 안 보내는 요청(로그인·회원가입)의 401은 자격증명이 틀렸다는 뜻인데,
-  // 예전에는 여기서 본문도 안 읽고 전부 "세션이 만료되었습니다"로 덮어썼다.
-  // 그래서 비밀번호를 틀리면 로그인 화면에 "세션이 만료되었습니다"가 떴고,
-  // 서버가 보낸 "이메일 또는 비밀번호가 올바르지 않습니다"는 버려졌다.
+  // 로그인·회원가입은 이제 이 함수를 아예 거치지 않는다(브라우저가 Cognito를 직접
+  // 호출한다 — lib/cognito.js). 그래서 여기 오는 401은 토큰이 거절된 경우뿐이지만,
+  // 조건은 그대로 둔다: needAuth가 아닌 요청의 401까지 "세션 만료"로 덮어쓰면
+  // 서버가 보낸 진짜 이유가 버려진다.
   if (res.status === 401 && needAuth) {
     auth.clear();
     throw apiError(data.error ?? '세션이 만료되었습니다. 다시 로그인해 주세요', 401);
@@ -69,25 +73,10 @@ export const api = {
   ping: () => request('/ping'),
 
   // --- 인증 ---
-  signup: (form) => request('/auth/signup', { method: 'POST', body: form }),
-  login: async (form) => {
-    const data = await request('/auth/login', { method: 'POST', body: form });
-    auth.set(data.token);
-    return data.user;
-  },
+  // signup/login은 여기 없다 — 브라우저가 Cognito를 직접 호출한다(lib/cognito.js).
+  // 백엔드에 남은 인증 엔드포인트는 "이 토큰이 누구냐"를 되묻는 /auth/me 하나뿐이다.
   logout: () => auth.clear(),
   me: () => request('/auth/me', { auth: true }),
-
-  // --- 소셜 로그인 ---
-  // 백엔드에 키가 들어간 공급자만 내려온다 (예: ['google', 'kakao']).
-  oauthProviders: () => request('/auth/oauth/providers'),
-
-  /**
-   * 여기는 fetch가 아니라 브라우저를 통째로 보내는 주소다.
-   * XHR로 부르면 구글/카카오 동의 화면이 CORS에 막힌다 — 반드시 location 이동.
-   */
-  oauthStartUrl: (provider, redirectPath = '/') =>
-    `${API_BASE_URL}/auth/oauth/${provider}?redirect=${encodeURIComponent(redirectPath)}`,
 
   // --- 경매 ---
   listAuctions: (params = {}) => {
@@ -120,6 +109,12 @@ export const api = {
   advanceClaim: (id) => request(`/admin/claims/${id}`, { method: 'PATCH', auth: true }),
   // 입찰·이미지까지 같이 지워지고 되돌릴 수 없다. 호출 전에 반드시 확인을 받을 것.
   adminDeleteAuction: (id) => request(`/admin/auctions/${id}`, { method: 'DELETE', auth: true }),
+
+  // 반려 큐 — image_moderation Lambda가 REJECTED로 판정해 자동 비공개된 경매들.
+  adminModeration: () => request('/admin/moderation', { auth: true }),
+  // 검토 결과 오탐이면 다시 공개한다.
+  adminRestoreAuction: (id) =>
+    request(`/admin/moderation/${id}/restore`, { method: 'PATCH', auth: true }),
 
   // --- 이미지 업로드 ---
   // 파일이 백엔드 컨테이너를 거치지 않고 브라우저에서 S3로 바로 올라간다

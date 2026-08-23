@@ -113,7 +113,9 @@ export default function AdminDashboard() {
           <p style={{ fontSize: 13, color: '#8C8C8C' }}>{hint}</p>
           <p style={{ fontSize: 11, color: '#B5B5B5', marginTop: 12 }}>
             상태 {errorStatus || '—'} · 로그인 {loggedIn ? '됨' : '안 됨'}
-            {user?.role ? ` · 권한 ${user.role}` : ''}
+            {/* 관리자 권한은 Cognito의 admin 그룹 멤버십으로 판단한다 (users.role 컬럼은 없어졌다).
+                그룹에 안 속하면 클레임 자체가 없어서 빈 배열로 내려온다. */}
+            {user ? ` · 그룹 ${user.groups?.length ? user.groups.join(', ') : '없음'}` : ''}
           </p>
         </div>
       </div>

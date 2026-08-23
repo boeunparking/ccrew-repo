@@ -72,17 +72,28 @@ terraform init && terraform apply     # state 버킷 + CI 롤 2개
 | 이름 | 비고 |
 |---|---|
 | `AWS_ACCOUNT_ID` | OIDC 롤 ARN을 조립하는 데 쓴다 |
-| `GOOGLE_CLIENT_SECRET` | 소셜 로그인용. 없으면 apply가 변수 validation에서 멈춘다 |
-| `KAKAO_CLIENT_SECRET` | 선택. 카카오 콘솔에서 client_secret을 '사용함'으로 켠 경우만 |
+| `GOOGLE_CLIENT_SECRET` | 구글 로그인용(Cognito Identity Provider). 없으면 apply가 변수 validation에서 멈춘다 |
 
-**등록할 게 이 셋뿐인 이유**는 나머지가 이미 저장소에 있기 때문이다.
-인증서 ARN·알람 이메일·OAuth client_id 같은 값은 `terraform/terraform.tfvars`에 들어
+카카오는 지원하지 않는다 — 회원/소셜 로그인이 Cognito User Pool로 넘어갔는데
+Cognito가 기본 지원하는 IdP가 아니라 뺐다. 예전에 등록해 둔
+`KAKAO_CLIENT_SECRET` / `KAKAO_REST_API_KEY` 는 이제 아무 데서도 참조하지 않으므로
+지워도 된다.
+
+**등록할 게 이 둘뿐인 이유**는 나머지가 이미 저장소에 있기 때문이다.
+인증서 ARN·알람 이메일·구글 client_id 같은 값은 `terraform/terraform.tfvars`에 들어
 있고 그 파일은 git에 추적되고 있다(`.gitignore`에 `*.tfvars`가 있지만, 그 규칙이
 추가되기 전부터 추적 중이라 계속 따라간다 — gitignore는 이미 추적 중인 파일에는
 적용되지 않는다). 즉 CI 체크아웃에도 그대로 있으므로 따로 넘길 필요가 없다.
 
-반면 `client_secret` 류는 `secrets.auto.tfvars`에 있고 그 파일은 추적되지 않는다.
-CI에는 존재하지 않으므로 이 둘만 Secrets에서 가져온다.
+반면 `client_secret` 은 `secrets.auto.tfvars`에 있고 그 파일은 추적되지 않는다.
+CI에는 존재하지 않으므로 이 값만 Secrets에서 가져온다.
+
+구글 클라우드 콘솔의 "승인된 리디렉션 URI"에는 우리 백엔드 주소가 아니라 Cognito가
+관리하는 고정 URI를 등록한다. apply 후 아래로 확인한다:
+
+```bash
+terraform -chdir=terraform output cognito_google_idp_response_uri
+```
 
 로컬에서 apply하려면 `secrets.auto.tfvars`만 채우면 된다
 (`cp secrets.auto.tfvars.example secrets.auto.tfvars`).

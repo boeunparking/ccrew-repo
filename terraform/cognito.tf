@@ -174,6 +174,43 @@ locals {
   ]
 }
 
+########################################
+# 프론트엔드 배포 파이프라인이 읽어가는 값
+#
+# user_pool_id / client_id 는 우리가 정하는 이름이 아니라 AWS 가 생성 시점에 부여한다.
+# destroy 후 재구축하면 값이 바뀌는데, 프론트 번들에 빌드타임으로 박아 두면 그 복사본은
+# 그대로 남는다 — 그러면 로그인만 조용히 깨지고 배포는 초록불이다.
+# cloudfront.tf 의 bucket_name/distribution_id 와 똑같은 문제라 똑같이 푼다:
+# 값을 만드는 쪽(terraform)이 SSM 에 써 두고, 쓰는 쪽(deploy.yml 의 frontend 잡)이
+# 배포 시점에 읽어 dist/config.js 를 만든다.
+#
+# 경로를 /frontend/ 아래에 두는 이유는 권한이다 — github-actions-frontend-deploy 롤은
+# parameter/cloud-duck/frontend/* 만 읽을 수 있다(terraform-bootstrap/oidc.tf).
+# 다른 경로에 두면 IAM 정책도 같이 넓혀야 한다.
+#
+# 셋 다 브라우저 번들에 그대로 노출되는 공개값이라 SecureString 이 아니라 String 이다.
+########################################
+resource "aws_ssm_parameter" "frontend_cognito_user_pool_id" {
+  name        = "/${var.project}/frontend/cognito_user_pool_id"
+  description = "Cognito User Pool ID (프론트 배포 잡이 읽는다)"
+  type        = "String"
+  value       = aws_cognito_user_pool.this.id
+}
+
+resource "aws_ssm_parameter" "frontend_cognito_client_id" {
+  name        = "/${var.project}/frontend/cognito_client_id"
+  description = "Cognito 앱 클라이언트 ID (프론트 배포 잡이 읽는다)"
+  type        = "String"
+  value       = aws_cognito_user_pool_client.web.id
+}
+
+resource "aws_ssm_parameter" "frontend_cognito_domain" {
+  name        = "/${var.project}/frontend/cognito_domain"
+  description = "Cognito 호스팅 도메인 (구글 로그인 리다이렉트에 쓴다)"
+  type        = "String"
+  value       = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${var.region_seoul}.amazoncognito.com"
+}
+
 # Google Cloud Console에 등록해야 하는 값. 지금까지(oauth.tf 시절)는 우리 백엔드
 # 콜백을 등록했지만, Cognito로 오면서 Google이 코드를 돌려주는 상대는 이 고정 URI
 # 하나뿐이다 — 우리 앱의 콜백은 callback_urls(위 locals)에 등록하는 것이고 구글
