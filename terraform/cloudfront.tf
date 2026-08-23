@@ -14,7 +14,7 @@ resource "aws_s3_bucket" "frontend" {
   bucket = "${var.project}-frontend-apne2"
 
   tags = { Name = "${var.project}-frontend" }
-  
+
   lifecycle {
     prevent_destroy = true
   }

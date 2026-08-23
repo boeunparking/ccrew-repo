@@ -44,13 +44,9 @@ data "aws_iam_policy_document" "ecs_execution_read_db_secrets" {
     resources = [
       module.rds_seoul.secret_arn,
       module.rds_tokyo_replica.secret_arn,
-      # JWT 서명 키 + 소셜 로그인 client_secret (oauth.tf). 도쿄 복제본도 같이 열어준다.
-      local.app_auth_secret_arn_seoul,
-      local.app_auth_secret_arn_tokyo,
-      # 관리자 계정 시드 (admin-credentials.tf).
-      # 여기 빠지면 태스크가 시크릿 주입 단계에서 AccessDenied로 죽어
-      # PROVISIONING↔STOPPED를 무한 반복한다 — 컨테이너 로그도 안 남으므로 원인 찾기가 어렵다.
-      aws_secretsmanager_secret.admin.arn,
+      # JWT 서명 키 + 소셜 로그인 client_secret(oauth.tf), 관리자 계정 시드
+      # (admin-credentials.tf)는 더 이상 ECS 태스크로 주입되지 않는다 — Cognito로
+      # 이전하면서 web 태스크가 필요로 하는 시크릿은 DB 자격증명뿐이다.
     ]
   }
 }
@@ -236,12 +232,14 @@ locals {
     { name = "DB_HOST", value = module.rds_seoul.db_address },
     { name = "DB_PORT", value = "3306" },
     { name = "DB_NAME", value = "cloud_duck" },
-  ], local.web_oauth_environment)
+  ], local.web_cognito_environment)
 
-  seoul_web_secrets = concat([
+  # Cognito로 넘어오면서 JWT_SECRET/GOOGLE_CLIENT_SECRET/ADMIN_* 시크릿 주입이
+  # 전부 없어졌다 — 남은 건 DB 접속 정보뿐이다.
+  seoul_web_secrets = [
     { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
-  ], local.web_auth_secrets_seoul, local.web_admin_secrets)
+  ]
 }
 
 # Task Definition - Web (Fargate)
@@ -313,13 +311,14 @@ module "web_service_tokyo" {
     { name = "DB_HOST", value = module.rds_tokyo_replica.db_address },
     { name = "DB_PORT", value = "3306" },
     { name = "DB_NAME", value = "cloud_duck" },
-  ], local.web_oauth_environment)
-  # 서울과 같은 JWT 키를 써야 failover 후에도 기존 토큰이 그대로 통한다.
-  # 다만 ARN은 도쿄 복제본을 가리켜야 한다 — ECS는 타 리전 시크릿을 못 읽는다.
-  secrets = concat([
+  ], local.web_cognito_environment)
+  # Cognito User Pool은 서울에만 있는 리전 리소스지만 문제 없다 — user pool id/
+  # client id/domain은 시크릿이 아니라 평문 값이라 리전 복제 없이 그대로 재사용한다.
+  # (토큰 검증은 인터넷으로 JWKS를 fetch하는 방식이라 애초에 리전 종속이 없다.)
+  secrets = [
     { name = "DB_USER", valueFrom = "${module.rds_tokyo_replica.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_tokyo_replica.secret_arn}:password::" },
-  ], local.web_auth_secrets_tokyo)
+  ]
 
   desired_count                 = 2
   launch_type                   = "FARGATE"
@@ -360,6 +359,17 @@ module "batch_service" {
     { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
     { name = "SES_FROM_ADDRESS", value = var.ses_from_address },
     { name = "POLL_INTERVAL_SECONDS", value = "30" },
+    # 낙찰 메일 발송 직전 hidden_at(이미지 반려 여부)을 확인하기 위한 최소 DB 연결.
+    # batch는 원래 RDS를 안 보지만, 반려 상태는 RDS에만 있고 Redis(auctions:open)에는
+    # 반영되지 않으므로(web/store.js, image_moderation Lambda) 여기서 직접 확인한다.
+    { name = "DB_HOST", value = module.rds_seoul.db_address },
+    { name = "DB_PORT", value = "3306" },
+    { name = "DB_NAME", value = "cloud_duck" },
+  ]
+
+  secrets = [
+    { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
+    { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
   ]
 
   desired_count     = 3

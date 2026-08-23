@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-sesv2": "^3.400.0",
+    "mysql2": "^3.11.0",
     "redis": "^4.7.0"
   }
 }

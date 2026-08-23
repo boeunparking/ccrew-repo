@@ -39,6 +39,10 @@ yarn-error.log*
 tmp/
 coverage/
 
+# ── Python (Lambda 소스에 pip install --target 으로 벤더링한 의존성은 커밋 대상) ──
+__pycache__/
+*.pyc
+
 # ── 에디터 / OS ─────────────────────────────────────
 .DS_Store
 Thumbs.db

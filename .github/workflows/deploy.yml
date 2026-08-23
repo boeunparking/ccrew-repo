@@ -68,9 +68,8 @@ env:
   # 등록 위치: Settings > Secrets and variables > Actions
   #   [Variables] CERTIFICATE_ARN, CERTIFICATE_ARN_TOKYO, VPN_SERVER_CERT_ARN,
   #               VPN_CLIENT_ROOT_CERT_ARN, ALARM_EMAIL,
-  #               GOOGLE_CLIENT_ID, KAKAO_REST_API_KEY
-  #   [Secrets]   AWS_ACCOUNT_ID(이미 등록돼 있음), GOOGLE_CLIENT_SECRET,
-  #               (선택) KAKAO_CLIENT_SECRET
+  #               GOOGLE_CLIENT_ID
+  #   [Secrets]   AWS_ACCOUNT_ID(이미 등록돼 있음), GOOGLE_CLIENT_SECRET
   TF_VAR_image_tag_web: ${{ github.sha }}
   TF_VAR_image_tag_batch: ${{ github.sha }}
   TF_VAR_certificate_arn: ${{ vars.CERTIFICATE_ARN }}
@@ -80,9 +79,6 @@ env:
   TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
   TF_VAR_google_client_id: ${{ vars.GOOGLE_CLIENT_ID }}
   TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-  TF_VAR_kakao_rest_api_key: ${{ vars.KAKAO_REST_API_KEY }}
-  # 카카오 콘솔에서 client_secret 을 '사용함'으로 켠 경우에만 채운다. 안 켰으면 빈 값이 정상.
-  TF_VAR_kakao_client_secret: ${{ secrets.KAKAO_CLIENT_SECRET }}
 
 jobs:
   # ──────────────────────────────────────────────────────────────
@@ -90,8 +86,8 @@ jobs:
   #
   # terraform 이 잡아주는 건 "값이 아예 없는" 경우뿐이다. Variables 를 등록 안 하면
   # ${{ vars.X }} 는 에러가 아니라 빈 문자열로 치환되고, default 가 "" 인 변수
-  # (google_client_id, kakao_rest_api_key)는 빈 값으로 조용히 apply 돼 버린다.
-  # 그러면 apply 는 초록불인데 소셜 로그인 버튼만 사라지는, 가장 찾기 어려운 형태로 깨진다.
+  # (google_client_id)는 빈 값으로 조용히 apply 돼 버린다.
+  # 그러면 apply 는 초록불인데 구글 로그인 버튼만 사라지는, 가장 찾기 어려운 형태로 깨진다.
   # 그 경로를 여기서 막는다 — 30초짜리 잡 하나로 20분짜리 배포 실패를 앞당겨 잡는다.
   # ──────────────────────────────────────────────────────────────
   preflight:
@@ -108,14 +104,13 @@ jobs:
           VPN_CLIENT_ROOT_CERT_ARN: ${{ vars.VPN_CLIENT_ROOT_CERT_ARN }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
-          KAKAO_REST_API_KEY: ${{ vars.KAKAO_REST_API_KEY }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           missing=()
           # 이름만 받아서 간접 참조로 값을 본다 — 값이 로그에 찍힐 일이 없다.
           for name in AWS_ACCOUNT_ID CERTIFICATE_ARN CERTIFICATE_ARN_TOKYO \
                       VPN_SERVER_CERT_ARN VPN_CLIENT_ROOT_CERT_ARN ALARM_EMAIL \
-                      GOOGLE_CLIENT_ID KAKAO_REST_API_KEY GOOGLE_CLIENT_SECRET; do
+                      GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET; do
             [ -n "${!name}" ] || missing+=("$name")
           done
 
