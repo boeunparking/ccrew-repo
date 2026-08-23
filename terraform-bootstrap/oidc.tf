@@ -48,7 +48,11 @@ locals {
 
   state_bucket = "ccrew-bootstrap"
 
-  frontend_bucket_name = "cloud-duck-frontend-apne2"
+  # 메인 스택 var.project 의 기본값과 같아야 한다 (terraform/variables.tf).
+  # 여기서 쓰는 곳: SSM 파라미터 경로 /cloud-duck/frontend/* 와 프론트 버킷 이름.
+  project = "cloud-duck"
+
+  frontend_bucket_name = "${local.project}-frontend-apne2"
   frontend_bucket_arn  = "arn:aws:s3:::${local.frontend_bucket_name}"
 
   ##########################################################
@@ -84,11 +88,20 @@ locals {
     "repo:${var.github_org}@${local.github_org_id}/${var.github_repo}@${local.repo_ids.ccrew_repo}:ref:refs/heads/main",
   ]
 
-  # ccrew-frontend: 별도 레포. 브랜치 제한은 워크플로우(on.push.branches)에 맡긴다.
-  sub_ccrew_frontend = [
-    "repo:${var.github_org}/ccrew-frontend:*",
-    "repo:${var.github_org}@${local.github_org_id}/ccrew-frontend@${local.repo_ids.ccrew_frontend}:*",
-  ]
+  # 프론트 배포 롤을 assume 할 수 있는 곳 = ccrew-repo 의 main 브랜치뿐.
+  #
+  # 프론트 소스가 ccrew-repo/ccrew-frontend/ 로 들어오면서, 빌드와 업로드를
+  # 전체 파이프라인(.github/workflows/deploy.yml)의 frontend 잡이 직접 한다.
+  # 그 잡은 ccrew-repo 에서 도는 워크플로우라 sub 클레임이 ccrew-repo 로 찍힌다.
+  #
+  # 옛 boeunparking/ccrew-frontend 저장소는 일부러 뺐다. 소스가 두 곳에 남아 있는
+  # 동안 그쪽에 누가 푸시하면, 옛 코드가 같은 S3 버킷을 덮어써서 방금 배포한
+  # 화면이 조용히 되돌아간다. 신뢰에서 빼두면 그 워크플로우가 AssumeRole 단계에서
+  # 시끄럽게 실패하므로 "여긴 이제 안 쓴다"가 바로 드러난다.
+  # (옛 저장소를 계속 쓰려면 아래 두 줄을 concat 으로 되살리면 된다:
+  #    "repo:${var.github_org}/ccrew-frontend:*",
+  #    "repo:${var.github_org}@${local.github_org_id}/ccrew-frontend@${local.repo_ids.ccrew_frontend}:*")
+  sub_frontend_deploy = local.sub_ccrew_repo
 }
 
 resource "aws_iam_openid_connect_provider" "github_actions" {
@@ -372,7 +385,7 @@ resource "aws_iam_role" "github_actions_frontend_deploy" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = local.sub_ccrew_frontend
+          "token.actions.githubusercontent.com:sub" = local.sub_frontend_deploy
         }
       }
     }]
@@ -387,8 +400,8 @@ resource "aws_iam_role_policy" "github_actions_frontend_deploy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
         Resource = [
           local.frontend_bucket_arn,
           "${local.frontend_bucket_arn}/*"
@@ -398,9 +411,23 @@ resource "aws_iam_role_policy" "github_actions_frontend_deploy" {
         # CloudFront distribution ID는 생성 시점에 AWS가 부여하는 값이라 bootstrap에서
         # 미리 알 수 없음 (ECR repo 이름처럼 우리가 미리 정하는 값이 아님).
         # CreateInvalidation은 리소스 레벨 제한 자체가 실용적이지 않아 "*"로 둠.
+        #
+        # GetInvalidation 이 함께 필요한 이유: 워크플로우가 무효화를 걸어만 두고
+        # 끝내면 잡의 초록불이 "배포 완료"를 뜻하지 않는다(캐시가 아직 옛 파일).
+        # aws cloudfront wait invalidation-completed 로 끝날 때까지 기다리는데,
+        # 그 wait 이 내부적으로 GetInvalidation 을 폴링한다.
         Effect   = "Allow"
-        Action   = "cloudfront:CreateInvalidation"
+        Action   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"]
         Resource = "*"
+      },
+      {
+        # 배포 대상(버킷 이름 / 배포 ID)을 SSM 에서 읽는다.
+        # 메인 스택(terraform/cloudfront.tf)이 인프라를 만들면서 같이 써 두는 값이라
+        # 사람이 GitHub Secrets 에 복사해 둘 필요가 없고, 재구축으로 배포 ID 가
+        # 바뀌어도 다음 프론트 배포가 알아서 새 값을 집는다.
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:GetParameters"]
+        Resource = "arn:aws:ssm:ap-northeast-2:${local.account_id}:parameter/${local.project}/frontend/*"
       }
     ]
   })

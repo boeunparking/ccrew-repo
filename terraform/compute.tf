@@ -1,13 +1,29 @@
 ### 컴퓨트 레이어 변수 ###
 # (hayun 브랜치 main.tf에 있던 변수들 - 여기로 옮김)
 
+# 이미지 태그.
+#
+# 값을 안 넘기면(null) ECR 에 마지막으로 푸시된 이미지를 알아서 찾아 쓴다.
+# 그래서 평소엔 아무 데도 태그를 적어 둘 필요가 없다.
+#
+# 왜 이렇게 바꿨나:
+#   예전엔 terraform.tfvars 에 커밋 SHA 를 직접 적어 뒀다. 그런데 그 파일은
+#   .gitignore 의 *.tfvars 로 제외돼 있어서 CI 가 갱신해 줄 수 없었고,
+#   CI 는 CI 대로 -var 로 최신 SHA 를 넘겼다. 결과적으로 파일에 적힌 값은
+#   항상 옛날 것이었고, 사람이 로컬에서 전체 apply 를 한 번 하는 순간
+#   방금 배포된 이미지가 조용히 이전 버전으로 롤백됐다.
+#
+#   CI 는 지금도 커밋 SHA 를 명시적으로 넘긴다(그래야 "이 커밋이 이 이미지"가
+#   보장된다). 자동 조회는 값을 모르는 로컬 apply 를 위한 안전망이다.
 variable "image_tag_web" {
   type        = string
-  description = "web ECR 이미지 태그 (CI/CD 파이프라인에서 전달)"
+  description = "web ECR 이미지 태그. 비워두면 ECR 최신 이미지를 자동으로 쓴다"
+  default     = null
 }
 variable "image_tag_batch" {
   type        = string
-  description = "batch ECR 이미지 태그 (CI/CD 파이프라인에서 전달)"
+  description = "batch ECR 이미지 태그. 비워두면 ECR 최신 이미지를 자동으로 쓴다"
+  default     = null
 }
 
 variable "certificate_arn" {
@@ -149,6 +165,34 @@ resource "aws_ecr_repository" "tf_batch_ecr" {
   force_delete = true
 }
 
+# ECR 에 마지막으로 푸시된 이미지 조회.
+#
+# count 로 감싼 이유가 핵심이다 — 태그가 넘어온 경우(=CI)에는 조회 자체를 하지 않는다.
+# 최초 구축처럼 ECR 이 아직 비어 있으면 이 data 소스는 "이미지 없음" 으로 실패하는데,
+# CI 파이프라인은 ECR 을 만든 직후 이미지를 푸시하고 나서 전체 apply 를 하므로
+# 항상 -var 로 태그를 넘긴다. 즉 CI 경로에서는 이 블록이 아예 평가되지 않는다.
+data "aws_ecr_image" "web_latest" {
+  count           = var.image_tag_web == null ? 1 : 0
+  repository_name = aws_ecr_repository.tf_web_ecr.name
+  most_recent     = true
+}
+
+data "aws_ecr_image" "batch_latest" {
+  count           = var.image_tag_batch == null ? 1 : 0
+  repository_name = aws_ecr_repository.tf_batch_ecr.name
+  most_recent     = true
+}
+
+locals {
+  # 넘어온 값이 있으면 그걸 쓰고, 없으면 방금 조회한 최신 이미지의 태그를 쓴다.
+  #
+  # image_tags[0] 을 그냥 쓰는 근거: CI 는 이미지 하나에 커밋 SHA 태그 하나만 붙인다.
+  # 사람이 콘솔에서 같은 이미지에 태그를 하나 더 달면 순서 보장이 없으므로,
+  # 그런 상황이라면 -var 로 명시하는 게 맞다.
+  image_tag_web   = var.image_tag_web != null ? var.image_tag_web : one(data.aws_ecr_image.web_latest[*].image_tags[0])
+  image_tag_batch = var.image_tag_batch != null ? var.image_tag_batch : one(data.aws_ecr_image.batch_latest[*].image_tags[0])
+}
+
 resource "aws_ecr_replication_configuration" "this" {
   replication_configuration {
     rule {
@@ -253,7 +297,7 @@ module "web_service" {
   cluster_id         = aws_ecs_cluster.tf_cluster.id
   cluster_name       = aws_ecs_cluster.tf_cluster.name
   ecr_repository_url = aws_ecr_repository.tf_web_ecr.repository_url
-  image_tag          = var.image_tag_web
+  image_tag          = local.image_tag_web
   execution_role_arn = module.ecs_execution.iam_role_arn
   task_role_arn      = module.ecs_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.web.name
@@ -292,7 +336,7 @@ module "web_service_tokyo" {
   cluster_id         = aws_ecs_cluster.tf_cluster_tokyo.id
   cluster_name       = aws_ecs_cluster.tf_cluster_tokyo.name
   ecr_repository_url = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region_tokyo}.amazonaws.com/${aws_ecr_repository.tf_web_ecr.name}"
-  image_tag          = var.image_tag_web
+  image_tag          = local.image_tag_web
   execution_role_arn = module.ecs_execution.iam_role_arn
   task_role_arn      = module.ecs_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.web_tokyo.name
@@ -351,7 +395,7 @@ module "batch_service" {
   cluster_id         = aws_ecs_cluster.tf_cluster.id
   cluster_name       = aws_ecs_cluster.tf_cluster.name
   ecr_repository_url = aws_ecr_repository.tf_batch_ecr.repository_url
-  image_tag          = var.image_tag_batch
+  image_tag          = local.image_tag_batch
   execution_role_arn = module.ecs_execution.iam_role_arn
   task_role_arn      = module.worker_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.batch.name

@@ -10,14 +10,27 @@ provider "aws" {
 ########################################
 # 프론트엔드 정적 파일 전용 S3 버킷
 ########################################
+# 다른 앱 버킷(modules/s3)과 동일하게 인프라 수명주기를 따라간다 —
+# apply 로 만들어지고 destroy 로 사라진다.
+#
+# force_destroy: 객체가 남아 있어도 버킷을 지운다.
+#
+# 이 버킷은 버저닝이 켜져 있어서 일반 삭제로는 절대 안 비워진다 — 현재 버전을 지워도
+# 이전 버전과 삭제 마커가 남아 BucketNotEmpty 로 destroy 가 막힌다. 그러면 사람이
+# list-object-versions 로 버전을 전부 훑어 지우는 수밖에 없다. force_destroy 는
+# 버전과 삭제 마커까지 전부 지우고 버킷을 없앤다.
+#
+# 여기 들어 있는 건 ccrew-frontend 저장소를 vite 로 빌드한 산출물이라, 원본이 git 에
+# 있고 워크플로우를 한 번 돌리면 그대로 복원된다. 잃어도 되는 데이터다.
+#
+# ⚠ 대신 destroy 후 재구축하면 이 버킷은 비어 있는 상태로 만들어진다.
+#    프론트 저장소에서 Deploy Frontend 를 한 번 돌려야 화면이 다시 뜬다
+#    (별도 저장소라 이 스택의 파이프라인이 대신 올려주지 못한다).
 resource "aws_s3_bucket" "frontend" {
-  bucket = "${var.project}-frontend-apne2"
+  bucket        = "${var.project}-frontend-apne2"
+  force_destroy = true
 
   tags = { Name = "${var.project}-frontend" }
-  
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "aws_s3_bucket_versioning" "frontend" {
@@ -25,6 +38,53 @@ resource "aws_s3_bucket_versioning" "frontend" {
 
   versioning_configuration {
     status = "Enabled"
+  }
+}
+
+# 이전 버전 정리.
+#
+# 왜 필요한가: 버저닝이 켜져 있는데 배포는 매번 `s3 sync --delete` 다.
+# 즉 push 할 때마다 이전 index.html 과 옛 번들이 "이전 버전"으로, 지워진 파일이
+# "삭제 마커"로 남는다. 아무도 안 지우면 배포 횟수만큼 무한히 쌓인다.
+# 스토리지 비용도 문제지만, force_destroy 가 destroy 때 그 버전을 전부
+# 1000개씩 나눠 지워야 해서 재구축이 갈수록 느려진다.
+#
+# 7일인 이유: "방금 배포가 잘못됐다"를 알아채고 되돌리기에 충분한 기간이다.
+# 그보다 오래 남겨둘 이유가 없다 — 원본은 ccrew-frontend 저장소에 있고
+# 어느 커밋으로든 다시 빌드할 수 있다.
+#
+# 이 규칙은 S3 가 하루 한 번쯤 백그라운드로 돌린다. terraform apply/destroy 와는
+# 무관하게 동작하므로 배포를 막거나 늦추지 않는다.
+resource "aws_s3_bucket_lifecycle_configuration" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  rule {
+    id     = "expire-noncurrent-versions"
+    status = "Enabled"
+
+    # 빈 filter = 버킷의 모든 객체. 생략하면 규칙 적용 범위가 정해지지 않는다.
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  # 삭제 마커만 남고 그 아래 버전이 전부 만료된 객체를 치운다.
+  # 안 켜두면 내용은 없는데 키만 영원히 남아서 목록이 지저분해진다.
+  #
+  # 위 규칙과 합치지 않고 따로 둔 이유: expiration 블록의 days 가 computed 라,
+  # 같은 rule 안에서 noncurrent_version_expiration 과 섞으면 plan 에 매번
+  # 의미 없는 변경이 잡히는 사례가 있다. 규칙 하나에 목적 하나면 그럴 일이 없다.
+  rule {
+    id     = "expire-delete-markers"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      expired_object_delete_marker = true
+    }
   }
 }
 
@@ -251,8 +311,37 @@ resource "aws_route53_record" "frontend" {
 }
 
 ########################################
-# GitHub Actions(프론트엔드 배포 파이프라인)에서 쓸 output
+# GitHub Actions(프론트엔드 배포 파이프라인)에서 쓸 값
+#
+# ccrew-frontend 저장소의 워크플로우는 "어느 버킷에 올리고 어느 배포를 무효화할지"를
+# 알아야 하는데, 그 값은 여기서 만들어진다. 예전에는 사람이 아래 output 을 읽어
+# GitHub Secrets 에 손으로 복사해 뒀다 — 그게 문제였다:
+#
+#   CloudFront 배포 ID 는 우리가 정하는 이름이 아니라 AWS 가 생성 시점에 부여하는
+#   값이다. destroy 후 재구축하면 ID 가 바뀌는데 Secrets 의 복사본은 그대로다.
+#   그러면 무효화 요청이 이미 없는 배포로 날아가고, 프론트 배포는 초록불인데
+#   사용자에게는 옛 화면이 계속 보인다. 조용히 어긋나는 종류의 고장이다.
+#
+# 그래서 값을 만드는 쪽(terraform)이 SSM 에 직접 써 두고, 쓰는 쪽(프론트 워크플로우)이
+# 배포 시점에 읽어간다. 사람이 옮겨 적는 단계를 없애면 어긋날 수가 없다.
+# 두 저장소가 state 를 공유하지 않으므로 remote state 대신 SSM 을 경유한다.
 ########################################
+resource "aws_ssm_parameter" "frontend_bucket_name" {
+  name        = "/${var.project}/frontend/bucket_name"
+  description = "프론트엔드 정적 파일 S3 버킷 (ccrew-frontend 워크플로우가 읽는다)"
+  type        = "String"
+  value       = aws_s3_bucket.frontend.bucket
+}
+
+resource "aws_ssm_parameter" "cloudfront_distribution_id" {
+  name        = "/${var.project}/frontend/distribution_id"
+  description = "프론트엔드 CloudFront 배포 ID (ccrew-frontend 워크플로우가 읽는다)"
+  type        = "String"
+  value       = aws_cloudfront_distribution.frontend.id
+}
+
+# 사람이 눈으로 확인할 때 쓰는 output. 배포 파이프라인은 위 SSM 을 읽으므로
+# 이 값을 어딘가에 복사해 둘 필요는 없다.
 output "cloudfront_distribution_id" {
   value = aws_cloudfront_distribution.frontend.id
 }

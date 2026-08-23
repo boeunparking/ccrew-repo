@@ -102,6 +102,17 @@ output "tokyo_alb_arn_suffix" {
 }
 
 
+### ---- 백업/복원 대상 버킷 ---- ###
+# destroy.yml 이 지우기 직전에, restore.yml 이 되돌릴 때 이 이름을 읽는다.
+# 이름을 워크플로우에 박아두지 않는 이유는 뻔하다 — 여기서 바뀌면 저기도 바꿔야
+# 한다는 걸 아무도 기억 못 하고, 그러면 "백업은 성공했는데 빈 버킷을 떴다"가 된다.
+
+output "uploads_bucket_name" {
+  description = "경매 업로드 이미지 버킷 (사용자가 올린 것 — 원본이 어디에도 없다)"
+  value       = module.s3.source_bucket_name
+}
+
+
 ### ---- Failover (Global Accelerator) ---- ###
 
 output "api_fqdn" {

@@ -1,10 +1,15 @@
 # .github/workflows/deploy.yml
 #
-# 전체 배포 파이프라인 — 인프라 · ECR · 이미지 · ECS 를 한 워크플로우에서 처리한다.
+# 전체 배포 파이프라인 — 인프라 · 백엔드 · 프론트엔드를 한 워크플로우에서 처리한다.
 #
-#   1) ecr     : ECR 저장소(+도쿄 복제 설정)만 먼저 만든다
-#   2) image   : web / batch 이미지를 빌드해서 커밋 SHA 태그로 푸시
-#   3) infra   : 전체 terraform apply — 이 시점엔 이미지가 이미 ECR 에 있다
+#   1) ecr      : ECR 저장소(+도쿄 복제 설정)만 먼저 만든다
+#   2) image    : web / batch 이미지를 빌드해서 커밋 SHA 태그로 푸시
+#   3) infra    : 전체 terraform apply — 이 시점엔 이미지가 이미 ECR 에 있다
+#   4) frontend : ccrew-frontend/ 를 빌드해 S3 에 올리고 CloudFront 무효화
+#
+# 이 한 번으로 세 가지가 전부 선다. 소스가 전부 이 저장소에 있으므로
+# 네 잡이 항상 같은 커밋을 빌드한다 — 저장소가 나뉘어 있을 때처럼
+# "인프라는 새 버전인데 프론트는 옛 버전"으로 어긋날 여지가 없다.
 #
 # 왜 ECR 을 따로 먼저 만드나 (1번 잡이 존재하는 이유):
 #   닭-달걀 문제다. ECR 이 없으면 docker push 를 할 수 없고, 이미지가 없는 상태로
@@ -20,7 +25,7 @@
 #     최초 1회만 로컬에서:  cd terraform-bootstrap && terraform init && terraform apply
 #   그 뒤로는 이 워크플로우가 전부 처리한다.
 
-name: Deploy (Infra + ECR + Image + ECS)
+name: Deploy (Infra + Backend + Frontend)
 
 on:
   push:
@@ -28,6 +33,7 @@ on:
     paths:
       - 'web/**'
       - 'batch/**'
+      - 'ccrew-frontend/**'
       - 'terraform/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
@@ -55,76 +61,63 @@ env:
   # 로컬에서 쓰는 버전과 맞춘다. main.tf 의 backend use_lockfile 은 1.10+ 필요.
   TF_VERSION: '1.15.7'
 
-  # terraform 변수 주입.
+  # 이미지 태그. 아래 terraform 명령에 -var 로 넘긴다.
   #
-  # terraform/terraform.tfvars 는 .gitignore 의 *.tfvars 로 제외돼 있어 git 에 없다.
-  # 즉 CI 체크아웃에는 그 파일이 존재하지 않으므로, default 가 없는 변수는 전부
-  # 여기서 넣어 줘야 한다. 안 넣으면 "No value for required variable" 로 apply 가 멈춘다.
+  # 왜 TF_VAR_ 환경변수가 아니라 -var 인가 — 이게 조용히 틀리기 쉬운 부분이다.
+  # terraform 의 변수 우선순위는 낮은 쪽부터:
+  #     TF_VAR_ 환경변수  <  terraform.tfvars  <  *.auto.tfvars  <  -var
+  # TF_VAR_ 가 제일 약하다. terraform.tfvars 에 같은 변수가 있으면 환경변수는
+  # 그냥 무시되고, "태그를 넘겼는데 옛 이미지가 배포되는" 형태로 어긋난다.
+  # 반드시 이겨야 하는 값이므로 가장 강한 -var 를 쓴다.
+  IMAGE_TAG: ${{ github.sha }}
+
+  # git 에 없는 값만 여기서 주입한다.
   #
-  # 비밀 아닌 값(인증서 ARN, 이메일, OAuth client_id)은 Repository *Variables*,
-  # 진짜 비밀(client_secret)만 *Secrets* 에 둔다. Variables 는 로그에서 값이 보이고
-  # 나중에 되읽을 수 있어서, 뭐가 들어가 있는지 확인할 수 있다는 게 실무상 큰 차이다.
+  # 인증서 ARN·알람 이메일·OAuth client_id 같은 값은 terraform/terraform.tfvars 에
+  # 들어 있고 그 파일은 저장소에 추적되고 있다. 즉 CI 체크아웃에도 그대로 있으므로
+  # 여기서 다시 넘길 필요가 없다(넘겨도 tfvars 가 이겨서 효과도 없다).
   #
-  # 등록 위치: Settings > Secrets and variables > Actions
-  #   [Variables] CERTIFICATE_ARN, CERTIFICATE_ARN_TOKYO, VPN_SERVER_CERT_ARN,
-  #               VPN_CLIENT_ROOT_CERT_ARN, ALARM_EMAIL,
-  #               GOOGLE_CLIENT_ID, KAKAO_REST_API_KEY
-  #   [Secrets]   AWS_ACCOUNT_ID(이미 등록돼 있음), GOOGLE_CLIENT_SECRET,
-  #               (선택) KAKAO_CLIENT_SECRET
-  TF_VAR_image_tag_web: ${{ github.sha }}
-  TF_VAR_image_tag_batch: ${{ github.sha }}
-  TF_VAR_certificate_arn: ${{ vars.CERTIFICATE_ARN }}
-  TF_VAR_certificate_arn_tokyo: ${{ vars.CERTIFICATE_ARN_TOKYO }}
-  TF_VAR_vpn_server_cert_arn: ${{ vars.VPN_SERVER_CERT_ARN }}
-  TF_VAR_vpn_client_root_cert_arn: ${{ vars.VPN_CLIENT_ROOT_CERT_ARN }}
-  TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
-  TF_VAR_google_client_id: ${{ vars.GOOGLE_CLIENT_ID }}
+  # 반면 client_secret 류는 secrets.auto.tfvars 에 있고 그 파일은 추적되지 않는다.
+  # CI 에는 존재하지 않으므로 이 두 개만 GitHub Secrets 에서 가져온다.
+  # (CI 에는 auto.tfvars 가 없으니 TF_VAR_ 로도 충분히 이긴다.)
   TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-  TF_VAR_kakao_rest_api_key: ${{ vars.KAKAO_REST_API_KEY }}
   # 카카오 콘솔에서 client_secret 을 '사용함'으로 켠 경우에만 채운다. 안 켰으면 빈 값이 정상.
   TF_VAR_kakao_client_secret: ${{ secrets.KAKAO_CLIENT_SECRET }}
 
 jobs:
   # ──────────────────────────────────────────────────────────────
-  # 0) 필수 값 사전 점검
+  # 0) 필수 Secrets 사전 점검
   #
-  # terraform 이 잡아주는 건 "값이 아예 없는" 경우뿐이다. Variables 를 등록 안 하면
-  # ${{ vars.X }} 는 에러가 아니라 빈 문자열로 치환되고, default 가 "" 인 변수
-  # (google_client_id, kakao_rest_api_key)는 빈 값으로 조용히 apply 돼 버린다.
-  # 그러면 apply 는 초록불인데 소셜 로그인 버튼만 사라지는, 가장 찾기 어려운 형태로 깨진다.
-  # 그 경로를 여기서 막는다 — 30초짜리 잡 하나로 20분짜리 배포 실패를 앞당겨 잡는다.
+  # Secrets 가 없어도 ${{ secrets.X }} 는 에러가 아니라 빈 문자열이 된다.
+  # AWS_ACCOUNT_ID 가 비면 role ARN 이 arn:aws:iam:::role/... 로 조립돼
+  # "왜 OIDC 가 안 되지" 를 한참 찾게 되고, GOOGLE_CLIENT_SECRET 이 비면
+  # 20분 걸리는 전체 apply 를 끝까지 돌린 뒤 변수 validation 에서 죽는다.
+  # 30초짜리 잡 하나로 둘 다 앞당겨 잡는다.
+  #
+  # 나머지 값(인증서 ARN 등)은 terraform.tfvars 가 저장소에 있으므로 검사하지 않는다.
   # ──────────────────────────────────────────────────────────────
   preflight:
     runs-on: ubuntu-latest
     steps:
       # 값을 run 스크립트에 직접 보간하지 않고 env 로 넘긴다 —
       # 보간하면 값에 따옴표가 섞였을 때 스크립트가 깨지거나 임의 명령이 실행될 수 있다.
-      - name: 필수 Variables / Secrets 확인
+      - name: 필수 Secrets 확인
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
-          CERTIFICATE_ARN_TOKYO: ${{ vars.CERTIFICATE_ARN_TOKYO }}
-          VPN_SERVER_CERT_ARN: ${{ vars.VPN_SERVER_CERT_ARN }}
-          VPN_CLIENT_ROOT_CERT_ARN: ${{ vars.VPN_CLIENT_ROOT_CERT_ARN }}
-          ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
-          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
-          KAKAO_REST_API_KEY: ${{ vars.KAKAO_REST_API_KEY }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           missing=()
           # 이름만 받아서 간접 참조로 값을 본다 — 값이 로그에 찍힐 일이 없다.
-          for name in AWS_ACCOUNT_ID CERTIFICATE_ARN CERTIFICATE_ARN_TOKYO \
-                      VPN_SERVER_CERT_ARN VPN_CLIENT_ROOT_CERT_ARN ALARM_EMAIL \
-                      GOOGLE_CLIENT_ID KAKAO_REST_API_KEY GOOGLE_CLIENT_SECRET; do
+          for name in AWS_ACCOUNT_ID GOOGLE_CLIENT_SECRET; do
             [ -n "${!name}" ] || missing+=("$name")
           done
 
           if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::다음 값이 비어 있다 — Settings > Secrets and variables > Actions 에 등록할 것:"
+            echo "::error::다음 Secret 이 비어 있다 — Settings > Secrets and variables > Actions 에 등록할 것:"
             printf '  - %s\n' "${missing[@]}"
             exit 1
           fi
-          echo "필수 값 확인 완료"
+          echo "필수 Secrets 확인 완료"
 
   # ──────────────────────────────────────────────────────────────
   # 1) ECR 저장소 생성 (+ 도쿄 복제 설정)
@@ -164,7 +157,12 @@ jobs:
 
       - name: ECR 저장소 생성
         run: |
+          # 여기서도 -var 로 태그를 넘기는 이유: 태그를 안 넘기면 compute.tf 의
+          # data.aws_ecr_image 가 켜져서(count=1) ECR 최신 이미지를 조회하려 든다.
+          # 지금은 저장소를 막 만드는 중이라 이미지가 하나도 없어서 그 조회가 실패한다.
           terraform apply -auto-approve -input=false \
+            -var "image_tag_web=$IMAGE_TAG" \
+            -var "image_tag_batch=$IMAGE_TAG" \
             -target=aws_ecr_repository.tf_web_ecr \
             -target=aws_ecr_repository.tf_batch_ecr \
             -target=aws_ecr_replication_configuration.this
@@ -241,14 +239,102 @@ jobs:
 
       # plan 을 파일로 떠서 그대로 apply 한다. plan 과 apply 사이에 상태가 달라져
       # "계획에 없던 삭제"가 실행되는 걸 막고, 로그에 무엇이 바뀔지가 남는다.
+      # -var 는 plan 에만 붙인다 — 저장된 플랜을 apply 할 때는 변수를 다시 받지 않는다
+      # (플랜에 이미 확정된 값이 박혀 있고, 다시 넘기면 terraform 이 거부한다).
       - name: terraform plan
-        run: terraform plan -input=false -out=tfplan
+        run: |
+          terraform plan -input=false -out=tfplan \
+            -var "image_tag_web=$IMAGE_TAG" \
+            -var "image_tag_batch=$IMAGE_TAG"
 
       - name: terraform apply
         run: terraform apply -input=false tfplan
 
       - name: 배포된 이미지 태그
         run: echo "web/batch 이미지 태그 = $GITHUB_SHA"
+
+  # ──────────────────────────────────────────────────────────────
+  # 4) 프론트엔드 배포
+  #
+  # 프론트 소스는 이 저장소의 ccrew-frontend/ 에 있다. web(API) · batch(워커) 와
+  # 같은 저장소이므로 별도 체크아웃도, 토큰도 필요 없다 — 위 잡들이 쓰는 것과
+  # 정확히 같은 커밋을 빌드한다는 보장도 덤으로 따라온다.
+  #
+  # 왜 infra 뒤인가: 올릴 버킷과 무효화할 CloudFront 배포가 infra 잡에서 만들어지고,
+  # 그 이름/ID 를 SSM 에 써 두는 것도 거기다. 앞서 돌면 읽을 게 없다.
+  # ──────────────────────────────────────────────────────────────
+  frontend:
+    needs: infra
+    if: inputs.mode != 'plan'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ccrew-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          # 캐시 키를 만들 lock 파일 위치. setup-node 는 기본으로 저장소 루트만
+          # 보기 때문에, 하위 폴더에 있으면 이걸 안 주면 "lock file is not found" 로 죽는다.
+          # (defaults.working-directory 는 run 스텝에만 적용되고 액션 입력에는 안 걸린다)
+          cache-dependency-path: ccrew-frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
+
+      # 전권 롤이 아니라 프론트 전용 롤을 쓴다 — 정적 파일 업로드에 계정 전권은 과하다.
+      # 이 잡은 ccrew-repo 에서 도므로, 그 롤의 신뢰 정책에 ccrew-repo main 이
+      # 들어가 있어야 한다(terraform-bootstrap/oidc.tf 의 sub_frontend_deploy).
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-frontend-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: target
+        name: 배포 대상 조회 (SSM)
+        run: |
+          bucket=$(aws ssm get-parameter --name /cloud-duck/frontend/bucket_name     --query Parameter.Value --output text)
+          dist=$(aws ssm get-parameter   --name /cloud-duck/frontend/distribution_id --query Parameter.Value --output text)
+          [ -n "$bucket" ] && [ -n "$dist" ] || {
+            echo "::error::SSM 값이 비어 있다 — infra 잡이 제대로 끝났는지 확인할 것."
+            exit 1
+          }
+          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+          echo "dist=$dist"     >> "$GITHUB_OUTPUT"
+          echo "버킷=$bucket / 배포=$dist"
+
+      # 캐시 수명이 정반대라 두 번에 나눈다.
+      #   assets/*  : vite 가 파일명에 콘텐츠 해시를 박는다. 내용이 바뀌면 이름이
+      #               바뀌므로 영구 캐시해도 낡지 않는다.
+      #   나머지     : index.html, config.js 처럼 이름이 고정된 파일. 캐시되면
+      #               새 번들을 가리키는 index.html 이 안 내려가 배포가 안 보인다.
+      # 자산을 먼저 올려야 index.html 이 내려간 순간 그게 가리키는 파일이 이미 있다.
+      - name: S3 업로드 ① 해시 붙은 자산 (영구 캐시)
+        run: |
+          aws s3 sync dist/ "s3://${{ steps.target.outputs.bucket }}/" --delete \
+            --exclude "*" --include "assets/*" \
+            --cache-control "public,max-age=31536000,immutable"
+
+      - name: S3 업로드 ② 나머지 (캐시 금지)
+        run: |
+          aws s3 sync dist/ "s3://${{ steps.target.outputs.bucket }}/" --delete \
+            --exclude "assets/*" \
+            --cache-control "no-cache"
+
+      # 완료까지 기다린다 — 안 기다리면 잡이 초록불인 시점에도 사용자는 옛 파일을 받는다.
+      - name: CloudFront 무효화
+        run: |
+          id=$(aws cloudfront create-invalidation \
+                 --distribution-id "${{ steps.target.outputs.dist }}" \
+                 --paths "/*" \
+                 --query Invalidation.Id --output text)
+          echo "무효화 $id 생성 — 완료까지 대기"
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "${{ steps.target.outputs.dist }}" --id "$id"
+          echo "배포 완료: https://cloudduck.cloud"
 
   # ──────────────────────────────────────────────────────────────
   # plan 전용 — 수동 실행에서 mode=plan 을 고른 경우.
@@ -278,4 +364,7 @@ jobs:
 
       # ECR 이 아직 없거나 이미지가 아직 없어도 plan 은 통과한다 —
       # terraform 은 이미지 존재 여부를 확인하지 않기 때문이다.
-      - run: terraform plan -input=false
+      - run: |
+          terraform plan -input=false \
+            -var "image_tag_web=$IMAGE_TAG" \
+            -var "image_tag_batch=$IMAGE_TAG"

@@ -1,0 +1,162 @@
+# .github/workflows/restore.yml
+#
+# destroy.yml 이 대피시켜 둔 데이터를 재구축된 버킷으로 되돌린다.
+#
+# 언제 쓰나: destroy → Deploy(재구축) 를 마친 뒤 한 번.
+#   - 업로드 이미지: 사용자가 올린 것이라 원본이 어디에도 없다. 이걸로만 돌아온다.
+#   - 프론트 정적 파일: Deploy 파이프라인의 frontend 잡이 소스에서 다시 빌드해
+#     이미 채워 놓는다. 그래도 되돌릴 수 있게 선택지를 열어 둔다
+#     (예: 프론트 빌드가 깨져서 직전 배포본을 그대로 다시 올리고 싶을 때).
+#
+# 자동이 아니라 수동인 이유:
+#   복원은 살아 있는 버킷에 옛 파일을 덮어쓰는 작업이다. 배포마다 자동으로 돌면
+#   "왜 지운 이미지가 되살아나지" 같은 일이 생긴다. 사람이 의도한 순간에만 돈다.
+
+name: Restore (백업 복원)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '무엇을 되돌릴지'
+        required: true
+        type: choice
+        options:
+          - uploads
+          - frontend
+          - both
+        default: uploads
+      confirm:
+        description: '덮어쓰기를 확인하려면 restore 라고 정확히 입력'
+        required: true
+        type: string
+      stamp:
+        description: '되돌릴 백업 타임스탬프 (비워두면 가장 최근 것)'
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-clduck
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  TF_VERSION: '1.15.7'
+  TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+  TF_VAR_kakao_client_secret: ${{ secrets.KAKAO_CLIENT_SECRET }}
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 확인 문구 검사
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          [ "$CONFIRM" = "restore" ] || {
+            echo "::error::confirm 에 restore 를 정확히 입력해야 한다"
+            exit 1
+          }
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - run: terraform init -input=false
+
+      # 복원 대상은 "지금 떠 있는" 버킷이다. 재구축하면서 이름이 바뀌었을 수도 있으니
+      # 워크플로우에 박아두지 않고 state 에서 읽는다.
+      - id: buckets
+        name: 복원 대상 조회
+        run: |
+          uploads=$(terraform output -raw uploads_bucket_name 2>/dev/null || true)
+          frontend=$(terraform output -raw frontend_bucket_name 2>/dev/null || true)
+          [ -n "$uploads" ] || {
+            echo "::error::state 에 버킷이 없다 — 먼저 Deploy 로 인프라를 세울 것"
+            exit 1
+          }
+          echo "uploads=$uploads"   >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          echo "업로드=$uploads / 프론트=$frontend"
+
+      - name: 백업본 복원
+        env:
+          TARGET: ${{ inputs.target }}
+          STAMP_IN: ${{ inputs.stamp }}
+          UPLOADS: ${{ steps.buckets.outputs.uploads }}
+          FRONTEND: ${{ steps.buckets.outputs.frontend }}
+        run: |
+          BACKUP="cloud-duck-backup-${{ secrets.AWS_ACCOUNT_ID }}"
+
+          # 지정이 없으면 가장 최근 백업. 타임스탬프가 ISO 형식이라
+          # 사전순 정렬이 곧 시간순이다.
+          pick_stamp() {
+            local prefix="$1"
+            if [ -n "$STAMP_IN" ]; then
+              echo "$STAMP_IN"
+              return
+            fi
+            aws s3 ls "s3://$BACKUP/$prefix/" \
+              | awk '/PRE/ {print $2}' | tr -d '/' | sort | tail -1
+          }
+
+          restore_one() {
+            local prefix="$1" dest="$2"
+            local stamp
+            stamp="$(pick_stamp "$prefix")"
+
+            [ -n "$stamp" ] || {
+              echo "::error::s3://$BACKUP/$prefix/ 에 백업이 없다"
+              exit 1
+            }
+
+            # 지정한 타임스탬프가 실제로 있는지 본다. 없으면 sync 는 "복사할 게
+            # 없음"으로 조용히 성공해 버려서, 복원한 줄 알고 넘어가게 된다.
+            local n
+            n=$(aws s3 ls "s3://$BACKUP/$prefix/$stamp/" --recursive | wc -l)
+            [ "$n" -gt 0 ] || {
+              echo "::error::s3://$BACKUP/$prefix/$stamp/ 가 비어 있거나 없다"
+              exit 1
+            }
+
+            echo "복원: s3://$BACKUP/$prefix/$stamp/ → s3://$dest/  ($n 개)"
+            # --delete 를 쓰지 않는다. 백업 이후에 새로 올라온 파일까지 지우는 건
+            # 복원이 아니라 되돌리기다. 겹치는 키만 덮어쓴다.
+            aws s3 sync "s3://$BACKUP/$prefix/$stamp/" "s3://$dest/"
+          }
+
+          case "$TARGET" in
+            uploads)  restore_one uploads  "$UPLOADS" ;;
+            frontend) restore_one frontend "$FRONTEND" ;;
+            both)     restore_one uploads  "$UPLOADS"
+                      restore_one frontend "$FRONTEND" ;;
+          esac
+
+          echo "복원 완료"
+
+      # 프론트를 되돌렸다면 CloudFront 캐시가 옛 파일을 들고 있다.
+      # 무효화하지 않으면 S3 는 바뀌었는데 화면은 그대로다.
+      - name: CloudFront 무효화
+        if: inputs.target == 'frontend' || inputs.target == 'both'
+        run: |
+          dist=$(terraform output -raw cloudfront_distribution_id)
+          id=$(aws cloudfront create-invalidation --distribution-id "$dist" \
+                 --paths "/*" --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$dist" --id "$id"
+          echo "무효화 완료"

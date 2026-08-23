@@ -1,17 +1,16 @@
-# ECR에 실제로 존재하는 태그여야 한다. 없는 태그를 넣으면 태스크 정의는 등록되지만
-# ECS가 이미지를 못 받아 CannotPullContainerError 로 계속 죽는다.
-#   확인: aws ecr list-images --repository-name tf-web-ecr --region ap-northeast-2 --query "imageIds[].imageTag" --output text
+# image_tag_web / image_tag_batch 는 더 이상 여기 적지 않는다.
 #
-# CI(deploy.yml)는 이 값을 안 읽고 커밋 SHA를 -var 로 직접 넘긴다. 즉 CI가 배포하면
-# 실제 떠 있는 이미지와 이 파일이 어긋난다 — 그 상태로 로컬에서 전체 apply를 하면
-# 이미지가 옛 버전으로 되돌아간다.
+# 값을 비워두면 terraform 이 ECR 에서 마지막으로 푸시된 이미지를 찾아 쓴다
+# (compute.tf 의 data.aws_ecr_image 참고). CI 는 지금도 커밋 SHA 를 -var 로
+# 명시해서 넘기므로 "이 커밋이 이 이미지"라는 보장은 그대로다.
 #
-# 그래서 deploy.yml 의 sync-image-tag 잡이 배포 성공 후 이 두 줄을 자동으로 갱신하고
-# main 에 커밋한다. 이 워크플로우의 트리거 경로는 web/** 와 batch/** 뿐이라
-# 이 파일만 바뀐 커밋은 워크플로우를 다시 부르지 않는다(무한 루프 없음).
-# 즉 평소엔 손댈 일이 없고, CI 없이 로컬에서만 배포할 때만 직접 맞춘다.
-image_tag_web         = "72172b38d006d872101befaf02af21ee0364f456"
-image_tag_batch       = "72172b38d006d872101befaf02af21ee0364f456"
+# 예전에는 여기 태그를 적어 두고 CI 의 sync-image-tag 잡이 배포 후 이 두 줄을
+# 다시 커밋해서 맞췄다. 그 잡이 성공해야만 파일과 실제가 일치했고, 실패하거나
+# 사람이 그 사이에 로컬 apply 를 하면 방금 배포한 이미지가 조용히 롤백됐다.
+# 적어두지 않으면 어긋날 것도 없다.
+#
+# 특정 버전으로 되돌리고 싶을 때만 명시한다:
+#   terraform apply -var image_tag_web=<커밋SHA> -var image_tag_batch=<커밋SHA>
 certificate_arn       = "arn:aws:acm:ap-northeast-2:033177021117:certificate/92a3fd3f-214c-48e7-ba9d-e5fa48c53ce4"
 certificate_arn_tokyo = "arn:aws:acm:ap-northeast-1:033177021117:certificate/0518d7cb-9497-4af9-b6f4-7940a9edd525" # cloudduck.cloud (도쿄 리전 발급분, ISSUED)
 # github_org / github_repo 는 terraform-bootstrap 으로 옮겨졌다 (GitHub OIDC/IAM 롤과 함께).
