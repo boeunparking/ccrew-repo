@@ -10,8 +10,8 @@
 # main 에 커밋한다. 이 워크플로우의 트리거 경로는 web/** 와 batch/** 뿐이라
 # 이 파일만 바뀐 커밋은 워크플로우를 다시 부르지 않는다(무한 루프 없음).
 # 즉 평소엔 손댈 일이 없고, CI 없이 로컬에서만 배포할 때만 직접 맞춘다.
-image_tag_web         = "683639a3436ecfdda536ce12775703d6f74fbabf"
-image_tag_batch       = "683639a3436ecfdda536ce12775703d6f74fbabf"
+image_tag_web         = "72172b38d006d872101befaf02af21ee0364f456"
+image_tag_batch       = "72172b38d006d872101befaf02af21ee0364f456"
 certificate_arn       = "arn:aws:acm:ap-northeast-2:033177021117:certificate/92a3fd3f-214c-48e7-ba9d-e5fa48c53ce4"
 certificate_arn_tokyo = "arn:aws:acm:ap-northeast-1:033177021117:certificate/0518d7cb-9497-4af9-b6f4-7940a9edd525" # cloudduck.cloud (도쿄 리전 발급분, ISSUED)
 # github_org / github_repo 는 terraform-bootstrap 으로 옮겨졌다 (GitHub OIDC/IAM 롤과 함께).
