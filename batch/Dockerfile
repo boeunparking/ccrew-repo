@@ -4,7 +4,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 
-# --- runtime ---
+# --- runtime ----
 FROM node:20-slim
 WORKDIR /app
 ENV NODE_ENV=production
