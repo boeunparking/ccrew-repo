@@ -415,3 +415,62 @@ resource "aws_iam_role_policy_attachment" "github_actions_readonly" {
   role       = aws_iam_role.github_actions_deploy.id
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
+
+
+############################################################
+# 전체 인프라 apply 전용 롤 (github-actions-terraform)
+#
+# 왜 위의 github-actions-ecr-push 를 재사용하지 않나:
+#   그 롤은 "이미지 푸시 + ECS 태스크 정의 갱신"만 되도록 일부러 좁혀 놓은 것이다.
+#   반면 terraform/ 전체 apply 는 VPC/RDS/ElastiCache/IAM/KMS/Secrets Manager/
+#   CloudFront/Route53/Lambda/SES/Global Accelerator/WAF/Client VPN 을 전부
+#   생성·수정·삭제해야 해서 사실상 계정 전권이 필요하다.
+#   그 전권을 기존 롤에 얹으면 좁혀둔 의미가 통째로 사라지므로, "큰 망치"는
+#   별도 롤로 분리한다. 워크플로우의 role-to-assume ARN 만 보고 그 잡이 어느
+#   권한으로 도는지 구분할 수 있다는 이점도 있다.
+#
+# 위험 인지 — 이 롤을 assume 할 수 있으면 이 계정에서 사실상 뭐든 할 수 있다:
+#   신뢰 정책은 위 롤과 동일하게 ccrew-repo 의 main 브랜치로만 한정한다
+#   (local.sub_ccrew_repo). fork PR 이나 다른 브랜치에서는 assume 되지 않는다.
+#   바꿔 말하면 "main 에 푸시할 수 있는 사람 = 계정 관리자"가 되므로,
+#   GitHub 쪽에서 main 브랜치 보호 규칙(리뷰 필수 / 직접 푸시 금지)을 같이
+#   켜 두는 걸 권장한다. 그게 실질적인 최후 방어선이다.
+#
+# 최소권한 정책을 직접 쓰지 않은 이유:
+#   메인 스택은 리소스가 계속 늘어나는데, 그때마다 여기 Action 을 추가하지 않으면
+#   apply 가 AccessDenied 로 중간에 멈춘다. terraform 은 부분 실패해도 이미 만든
+#   리소스는 state 에 남으므로, 권한 누락은 "실패"가 아니라 "반쯤 배포된 상태"를
+#   만든다. 그게 전권보다 위험하다고 판단해 AdministratorAccess 를 쓴다.
+############################################################
+resource "aws_iam_role" "github_actions_terraform" {
+  name = "github-actions-terraform"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRoleWithWebIdentity"
+        Effect    = "Allow"
+        Principal = { Federated = aws_iam_openid_connect_provider.github_actions.arn }
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          }
+          StringLike = {
+            "token.actions.githubusercontent.com:sub" = local.sub_ccrew_repo
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "github_actions_terraform_admin" {
+  role       = aws_iam_role.github_actions_terraform.id
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+output "github_actions_terraform_role_arn" {
+  description = ".github/workflows/deploy.yml 의 전체 apply 잡이 assume 하는 롤"
+  value       = aws_iam_role.github_actions_terraform.arn
+}

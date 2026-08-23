@@ -1,5 +1,26 @@
 # .github/workflows/deploy.yml
-name: Build, Push & Deploy
+#
+# 전체 배포 파이프라인 — 인프라 · ECR · 이미지 · ECS 를 한 워크플로우에서 처리한다.
+#
+#   1) ecr     : ECR 저장소(+도쿄 복제 설정)만 먼저 만든다
+#   2) image   : web / batch 이미지를 빌드해서 커밋 SHA 태그로 푸시
+#   3) infra   : 전체 terraform apply — 이 시점엔 이미지가 이미 ECR 에 있다
+#
+# 왜 ECR 을 따로 먼저 만드나 (1번 잡이 존재하는 이유):
+#   닭-달걀 문제다. ECR 이 없으면 docker push 를 할 수 없고, 이미지가 없는 상태로
+#   전체 apply 를 하면 ECS 태스크 정의는 등록되지만 태스크가 CannotPullContainerError
+#   로 계속 죽는다(ECS 는 이미지 존재를 검증하지 않으므로 apply 자체는 "성공"한다).
+#   ECR 만 -target 으로 먼저 만들고 → 푸시 → 전체 apply 하면 그 창이 아예 없다.
+#   최초 구축이든 매일 배포든 같은 순서로 돌아가므로 경로가 하나뿐이다.
+#
+# 이 워크플로우가 못 하는 것 — terraform-bootstrap/ :
+#   state S3 버킷과 GitHub OIDC 롤은 여기서 만들 수 없다. Actions 가 AWS 에
+#   로그인하는 수단 자체가 그 롤이고, terraform init 이 붙을 backend 가 그 버킷이다.
+#   자기를 만들어 줄 권한을 자기가 만들 수는 없다.
+#     최초 1회만 로컬에서:  cd terraform-bootstrap && terraform init && terraform apply
+#   그 뒤로는 이 워크플로우가 전부 처리한다.
+
+name: Deploy (Infra + ECR + Image + ECS)
 
 on:
   push:
@@ -7,52 +28,114 @@ on:
     paths:
       - 'web/**'
       - 'batch/**'
-  workflow_dispatch: {}
+      - 'terraform/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'apply = 실제 배포 / plan = 계획만 확인(아무것도 바꾸지 않음)'
+        type: choice
+        options: [apply, plan]
+        default: apply
 
 permissions:
   id-token: write
   contents: read
 
+# state 는 S3 락(use_lockfile)으로 보호되지만, 락이 잡혀 있으면 뒤에 온 실행은
+# 그냥 "실패"로 끝난다. 워크플로우 단위에서 줄을 세워 그 실패를 없앤다.
+# cancel-in-progress 는 false — apply 도중에 취소하면 state 와 실제 인프라가
+# 어긋난 채로 남는다. 앞 배포가 끝날 때까지 기다리는 쪽이 안전하다.
+concurrency:
+  group: terraform-clduck
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ap-northeast-2
+  # 로컬에서 쓰는 버전과 맞춘다. main.tf 의 backend use_lockfile 은 1.10+ 필요.
+  TF_VERSION: '1.15.7'
+
+  # terraform 변수 주입.
+  #
+  # terraform/terraform.tfvars 는 .gitignore 의 *.tfvars 로 제외돼 있어 git 에 없다.
+  # 즉 CI 체크아웃에는 그 파일이 존재하지 않으므로, default 가 없는 변수는 전부
+  # 여기서 넣어 줘야 한다. 안 넣으면 "No value for required variable" 로 apply 가 멈춘다.
+  #
+  # 비밀 아닌 값(인증서 ARN, 이메일, OAuth client_id)은 Repository *Variables*,
+  # 진짜 비밀(client_secret)만 *Secrets* 에 둔다. Variables 는 로그에서 값이 보이고
+  # 나중에 되읽을 수 있어서, 뭐가 들어가 있는지 확인할 수 있다는 게 실무상 큰 차이다.
+  #
+  # 등록 위치: Settings > Secrets and variables > Actions
+  #   [Variables] CERTIFICATE_ARN, CERTIFICATE_ARN_TOKYO, VPN_SERVER_CERT_ARN,
+  #               VPN_CLIENT_ROOT_CERT_ARN, ALARM_EMAIL,
+  #               GOOGLE_CLIENT_ID, KAKAO_REST_API_KEY
+  #   [Secrets]   AWS_ACCOUNT_ID(이미 등록돼 있음), GOOGLE_CLIENT_SECRET,
+  #               (선택) KAKAO_CLIENT_SECRET
+  TF_VAR_image_tag_web: ${{ github.sha }}
+  TF_VAR_image_tag_batch: ${{ github.sha }}
+  TF_VAR_certificate_arn: ${{ vars.CERTIFICATE_ARN }}
+  TF_VAR_certificate_arn_tokyo: ${{ vars.CERTIFICATE_ARN_TOKYO }}
+  TF_VAR_vpn_server_cert_arn: ${{ vars.VPN_SERVER_CERT_ARN }}
+  TF_VAR_vpn_client_root_cert_arn: ${{ vars.VPN_CLIENT_ROOT_CERT_ARN }}
+  TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
+  TF_VAR_google_client_id: ${{ vars.GOOGLE_CLIENT_ID }}
+  TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+  TF_VAR_kakao_rest_api_key: ${{ vars.KAKAO_REST_API_KEY }}
+  # 카카오 콘솔에서 client_secret 을 '사용함'으로 켠 경우에만 채운다. 안 켰으면 빈 값이 정상.
+  TF_VAR_kakao_client_secret: ${{ secrets.KAKAO_CLIENT_SECRET }}
 
 jobs:
-  build-and-push:
+  # ──────────────────────────────────────────────────────────────
+  # 0) 필수 값 사전 점검
+  #
+  # terraform 이 잡아주는 건 "값이 아예 없는" 경우뿐이다. Variables 를 등록 안 하면
+  # ${{ vars.X }} 는 에러가 아니라 빈 문자열로 치환되고, default 가 "" 인 변수
+  # (google_client_id, kakao_rest_api_key)는 빈 값으로 조용히 apply 돼 버린다.
+  # 그러면 apply 는 초록불인데 소셜 로그인 버튼만 사라지는, 가장 찾기 어려운 형태로 깨진다.
+  # 그 경로를 여기서 막는다 — 30초짜리 잡 하나로 20분짜리 배포 실패를 앞당겨 잡는다.
+  # ──────────────────────────────────────────────────────────────
+  preflight:
     runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.vars.outputs.image_tag }}
     steps:
-      - uses: actions/checkout@v4
-
-      - id: vars
-        run: echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-ecr-push
-          aws-region: ${{ env.AWS_REGION }}
-
-      - id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build & push web image
+      # 값을 run 스크립트에 직접 보간하지 않고 env 로 넘긴다 —
+      # 보간하면 값에 따옴표가 섞였을 때 스크립트가 깨지거나 임의 명령이 실행될 수 있다.
+      - name: 필수 Variables / Secrets 확인
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
+          CERTIFICATE_ARN_TOKYO: ${{ vars.CERTIFICATE_ARN_TOKYO }}
+          VPN_SERVER_CERT_ARN: ${{ vars.VPN_SERVER_CERT_ARN }}
+          VPN_CLIENT_ROOT_CERT_ARN: ${{ vars.VPN_CLIENT_ROOT_CERT_ARN }}
+          ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          KAKAO_REST_API_KEY: ${{ vars.KAKAO_REST_API_KEY }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
-          docker build -t $ECR_REGISTRY/tf-web-ecr:$IMAGE_TAG -f web/Dockerfile web/
-          docker push $ECR_REGISTRY/tf-web-ecr:$IMAGE_TAG
+          missing=()
+          # 이름만 받아서 간접 참조로 값을 본다 — 값이 로그에 찍힐 일이 없다.
+          for name in AWS_ACCOUNT_ID CERTIFICATE_ARN CERTIFICATE_ARN_TOKYO \
+                      VPN_SERVER_CERT_ARN VPN_CLIENT_ROOT_CERT_ARN ALARM_EMAIL \
+                      GOOGLE_CLIENT_ID KAKAO_REST_API_KEY GOOGLE_CLIENT_SECRET; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
 
-      - name: Build & push batch image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
-        run: |
-          docker build -t $ECR_REGISTRY/tf-batch-ecr:$IMAGE_TAG -f batch/Dockerfile batch/
-          docker push $ECR_REGISTRY/tf-batch-ecr:$IMAGE_TAG
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::다음 값이 비어 있다 — Settings > Secrets and variables > Actions 에 등록할 것:"
+            printf '  - %s\n' "${missing[@]}"
+            exit 1
+          fi
+          echo "필수 값 확인 완료"
 
-  deploy:
-    needs: build-and-push
+  # ──────────────────────────────────────────────────────────────
+  # 1) ECR 저장소 생성 (+ 도쿄 복제 설정)
+  #
+  # 복제 설정도 같이 target 에 넣는 이유: aws_ecr_replication_configuration 은
+  # "설정된 뒤에 푸시된" 이미지부터 복제한다. 푸시 후에 켜면 첫 이미지가 도쿄에
+  # 안 넘어가고, failover 때 도쿄 태스크가 이미지를 못 받는다.
+  # ──────────────────────────────────────────────────────────────
+  ecr:
+    needs: preflight
+    if: inputs.mode != 'plan'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -62,84 +145,137 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-ecr-push
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
 
-      - run: terraform init
+      # provider 바이너리가 수백 MB 라 매번 받으면 잡마다 1분 이상 날아간다.
+      # lock 파일이 바뀔 때만 새로 받는다.
+      - uses: actions/cache@v4
+        with:
+          path: terraform/.terraform/providers
+          key: tf-providers-${{ runner.os }}-${{ hashFiles('terraform/.terraform.lock.hcl') }}
 
-      # ECR에 새 이미지가 올라온 뒤, ECS 태스크 정의/서비스만 갱신해서 새 이미지로 재배포한다.
-      # 전체 인프라(VPC/ALB/Lambda 등) 상태까지 읽지 않도록 -target으로 ECS 리소스만 한정.
-      # 도쿄(Warm Standby)도 같은 이미지 태그로 같이 갱신해야 failover 시 구버전이 뜨지 않는다.
-      # 도쿄 이미지는 aws_ecr_replication_configuration이 비동기로 복제하므로, 복제가 끝나기 전에
-      # 서비스가 새 태스크를 pull 시도하면 잠깐 실패할 수 있다 — ECS가 자동 재시도하므로 최종적으로는 반영됨.
-      - name: Redeploy ECS services with new image
-        env:
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+      - run: terraform init -input=false
+
+      - name: ECR 저장소 생성
         run: |
-          terraform apply -auto-approve \
-            -target=module.web_service.aws_ecs_task_definition.tf_task \
-            -target=module.web_service.aws_ecs_service.tf_task_service \
-            -target=module.batch_service.aws_ecs_task_definition.tf_task \
-            -target=module.batch_service.aws_ecs_service.tf_task_service \
-            -target=module.web_service_tokyo.aws_ecs_task_definition.tf_task \
-            -target=module.web_service_tokyo.aws_ecs_service.tf_task_service \
-            -target=module.admin_service.aws_ecs_task_definition.tf_task \
-            -target=module.admin_service.aws_ecs_service.tf_task_service \
-            -var "image_tag_web=$IMAGE_TAG" \
-            -var "image_tag_batch=$IMAGE_TAG" \
-            -var "certificate_arn=${{ secrets.CERTIFICATE_ARN }}" \
-            -var "certificate_arn_tokyo=${{ secrets.CERTIFICATE_ARN_TOKYO }}" \
-            -var "google_client_secret=${{ secrets.GOOGLE_CLIENT_SECRET }}" \
-            -var "kakao_client_secret=${{ secrets.KAKAO_CLIENT_SECRET }}"
-        # google_client_secret 은 default가 없는 변수라 안 넘기면 apply가 멈춘다.
-        # 일부러 그렇게 뒀다 — 빈 값으로 조용히 성공해서 Secrets Manager를 덮어쓰는 것보다
-        # 여기서 실패하는 게 낫다. Actions > Secrets 에 GOOGLE_CLIENT_SECRET 등록 필수.
-        # kakao_client_secret 은 선택값이라 Secret이 없으면 빈 문자열로 들어간다(정상).
-        # github_org / github_repo 는 더 이상 넘기지 않는다 — GitHub OIDC/IAM 롤이
-        # terraform-bootstrap 으로 분리되면서 메인 스택에 그 변수 선언이 없어졌다.
-        # 그대로 두면 "Value for undeclared variable" 에러로 apply 자체가 실패한다.
+          terraform apply -auto-approve -input=false \
+            -target=aws_ecr_repository.tf_web_ecr \
+            -target=aws_ecr_repository.tf_batch_ecr \
+            -target=aws_ecr_replication_configuration.this
 
-  # 위 deploy 잡은 -var 로 커밋 SHA를 넘기므로 terraform.tfvars 는 그대로 남는다.
-  # 그 상태로 누가 로컬에서 전체 apply를 하면 tfvars의 옛 태그가 이겨서 방금 배포한
-  # 이미지가 조용히 롤백된다. 그래서 배포가 성공한 뒤 tfvars를 실제 배포된 값으로 맞춰 커밋한다.
-  #
-  # 무한 루프가 생기지 않는 이유: 이 워크플로우의 트리거 경로는 web/** 와 batch/** 뿐이라
-  # terraform/terraform.tfvars 만 바뀐 이 커밋은 워크플로우를 다시 부르지 않는다.
-  sync-image-tag:
-    # deploy 까지 성공해야 돈다 — 배포가 실패했는데 tfvars만 갱신되면
-    # "파일은 새 이미지, 실제로 떠 있는 건 옛 이미지"라는 더 나쁜 어긋남이 된다.
-    needs: [build-and-push, deploy]
+  # ──────────────────────────────────────────────────────────────
+  # 2) 이미지 빌드 & 푸시
+  # ──────────────────────────────────────────────────────────────
+  image:
+    needs: ecr
+    if: inputs.mode != 'plan'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # 잡 단위 override. 이 잡은 AWS를 안 쓰므로 id-token 은 필요 없다.
     steps:
       - uses: actions/checkout@v4
+
+      # 이 잡은 terraform 을 돌리지 않고 ECR 에 푸시만 한다 —
+      # 전권 롤 대신 기존의 좁은 푸시 전용 롤을 그대로 쓴다.
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          ref: main
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-ecr-push
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Sync image tags in terraform.tfvars
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: web 이미지 빌드 & 푸시
         env:
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          sed -i -E "s|^(image_tag_web[[:space:]]*=[[:space:]]*).*|\1\"$IMAGE_TAG\"|"   terraform/terraform.tfvars
-          sed -i -E "s|^(image_tag_batch[[:space:]]*=[[:space:]]*).*|\1\"$IMAGE_TAG\"|" terraform/terraform.tfvars
+          docker build -t "$ECR_REGISTRY/tf-web-ecr:$GITHUB_SHA" -f web/Dockerfile web/
+          docker push "$ECR_REGISTRY/tf-web-ecr:$GITHUB_SHA"
 
-          # sed 가 아무것도 못 바꿨는데 조용히 성공하는 걸 막는다 —
-          # 변수명이 바뀌거나 줄 형식이 달라지면 여기서 잡힌다.
-          grep -q "^image_tag_web[[:space:]]*=[[:space:]]*\"$IMAGE_TAG\"" terraform/terraform.tfvars \
-            || { echo "image_tag_web 치환 실패 — terraform.tfvars 형식을 확인할 것"; exit 1; }
+      - name: batch 이미지 빌드 & 푸시
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t "$ECR_REGISTRY/tf-batch-ecr:$GITHUB_SHA" -f batch/Dockerfile batch/
+          docker push "$ECR_REGISTRY/tf-batch-ecr:$GITHUB_SHA"
 
-          if git diff --quiet -- terraform/terraform.tfvars; then
-            echo "이미 동기화되어 있음 — 커밋할 것 없음"
-            exit 0
-          fi
+  # ──────────────────────────────────────────────────────────────
+  # 3) 전체 인프라 apply (ECS 재배포 포함)
+  #
+  # -target 없이 통째로 돈다. 그래서 ECS 태스크 정의가 방금 푸시한 SHA 태그로
+  # 갱신되는 것과 동시에, terraform 코드와 실제 인프라가 항상 일치하게 된다.
+  #
+  # 주의 — 콘솔에서 손으로 바꾼 설정은 매 배포마다 코드 상태로 되돌아간다.
+  # 그게 이 방식의 목적이자 대가다. 임시로 콘솔에서 만진 게 있으면 코드에 반영할 것.
+  # ──────────────────────────────────────────────────────────────
+  infra:
+    needs: image
+    if: inputs.mode != 'plan'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
 
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add terraform/terraform.tfvars
-          git commit -m "chore(tf): 배포된 이미지 태그 동기화 ($IMAGE_TAG)"
-          # 이 잡이 도는 사이 main 에 다른 푸시가 들어왔을 수 있다.
-          git pull --rebase origin main
-          git push origin HEAD:main
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: actions/cache@v4
+        with:
+          path: terraform/.terraform/providers
+          key: tf-providers-${{ runner.os }}-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+
+      - run: terraform init -input=false
+
+      # plan 을 파일로 떠서 그대로 apply 한다. plan 과 apply 사이에 상태가 달라져
+      # "계획에 없던 삭제"가 실행되는 걸 막고, 로그에 무엇이 바뀔지가 남는다.
+      - name: terraform plan
+        run: terraform plan -input=false -out=tfplan
+
+      - name: terraform apply
+        run: terraform apply -input=false tfplan
+
+      - name: 배포된 이미지 태그
+        run: echo "web/batch 이미지 태그 = $GITHUB_SHA"
+
+  # ──────────────────────────────────────────────────────────────
+  # plan 전용 — 수동 실행에서 mode=plan 을 고른 경우.
+  # 아무것도 만들지 않고 무엇이 바뀔지만 보여준다.
+  # ──────────────────────────────────────────────────────────────
+  plan-only:
+    needs: preflight
+    if: inputs.mode == 'plan'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - run: terraform init -input=false
+
+      # ECR 이 아직 없거나 이미지가 아직 없어도 plan 은 통과한다 —
+      # terraform 은 이미지 존재 여부를 확인하지 않기 때문이다.
+      - run: terraform plan -input=false
