@@ -1,0 +1,376 @@
+{
+  "uid": "cloud-duck-dr",
+  "title": "cloud-duck / DR 상태 (서울 ↔ 도쿄)",
+  "description": "장애 전환 준비 상태를 보는 대시보드. 도쿄는 Warm Standby 라 평상시 트래픽이 0이므로, '요청이 없는 것'이 정상이고 '태스크가 떠 있고 복제가 따라붙는 것'이 건강 지표다.",
+  "tags": ["cloud-duck", "dr", "tokyo"],
+  "timezone": "Asia/Seoul",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "전환 준비 상태",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "복제 지연 (RPO)",
+      "description": "지금 서울이 죽으면 이만큼의 데이터를 잃는다. 사실상의 RPO 값이다.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s", "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 30 }, { "color": "red", "value": 120 }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "ReplicaLag",
+          "dimensions": { "DBInstanceIdentifier": "${rds_replica_tokyo}" },
+          "statistic": "Average", "region": "${region_tokyo}", "matchExact": true, "period": ""
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "도쿄 대기 태스크",
+      "description": "Warm Standby 로 상시 2개를 띄워둔다. 0이면 장애 시 콜드 스타트가 되어 전환이 늦어진다.",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 2 }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "HealthyHostCount",
+          "dimensions": { "LoadBalancer": "${alb_tokyo}" },
+          "statistic": "Average", "region": "${region_tokyo}", "matchExact": false, "period": ""
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "서울 정상 태스크",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 2 }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background", "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "HealthyHostCount",
+          "dimensions": { "LoadBalancer": "${alb_seoul}", "TargetGroup": "${tg_web}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": ""
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "복제 지연 추이",
+      "description": "튀는 구간이 있으면 그 시각 서울 primary 의 쓰기 부하나 네트워크를 함께 본다.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 7 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s", "min": 0,
+          "custom": { "fillOpacity": 20, "showPoints": "never", "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 30 }, { "color": "red", "value": 120 }] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["mean", "max"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "ReplicaLag",
+          "dimensions": { "DBInstanceIdentifier": "${rds_replica_tokyo}" },
+          "statistic": "Average", "region": "${region_tokyo}", "matchExact": true, "period": "",
+          "label": "도쿄 크로스리전 replica"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "ReplicaLag",
+          "dimensions": { "DBInstanceIdentifier": "${rds_replica_seoul}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "서울 같은리전 replica (비교용)"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Global Accelerator (트래픽 분배)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "collapsed": false
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "GA 신규 연결 수",
+      "description": "평상시 traffic_dial 이 서울 100% / 도쿄 0% 라 도쿄 쪽은 0에 붙어 있는 게 정상이다. 전환하면 이 그래프가 뒤집힌다.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["sum"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/GlobalAccelerator", "metricName": "NewFlowCount",
+          "dimensions": { "Accelerator": "${ga_id}" },
+          "statistic": "Sum", "region": "us-east-1", "matchExact": false, "period": ""
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "GA 처리 바이트",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["sum"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/GlobalAccelerator", "metricName": "ProcessedBytesIn",
+          "dimensions": { "Accelerator": "${ga_id}" },
+          "statistic": "Sum", "region": "us-east-1", "matchExact": false, "period": "",
+          "label": "수신"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/GlobalAccelerator", "metricName": "ProcessedBytesOut",
+          "dimensions": { "Accelerator": "${ga_id}" },
+          "statistic": "Sum", "region": "us-east-1", "matchExact": false, "period": "",
+          "label": "송신"
+        }
+      ]
+    },
+
+    {
+      "id": 20,
+      "type": "row",
+      "title": "서울 vs 도쿄 대칭 비교",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "collapsed": false
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "ALB 요청 수",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 25 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "RequestCount",
+          "dimensions": { "LoadBalancer": "${alb_seoul}" },
+          "statistic": "Sum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "서울"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "RequestCount",
+          "dimensions": { "LoadBalancer": "${alb_tokyo}" },
+          "statistic": "Sum", "region": "${region_tokyo}", "matchExact": true, "period": "",
+          "label": "도쿄"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "ECS CPU",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 25 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "CPUUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_seoul}", "ServiceName": "${svc_web}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "서울 web"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "CPUUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_tokyo}", "ServiceName": "${svc_web_tokyo}" },
+          "statistic": "Average", "region": "${region_tokyo}", "matchExact": true, "period": "",
+          "label": "도쿄 web"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "RDS CPU",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 25 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "CPUUtilization",
+          "dimensions": { "DBInstanceIdentifier": "${rds_primary}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "서울 primary"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "CPUUtilization",
+          "dimensions": { "DBInstanceIdentifier": "${rds_replica_tokyo}" },
+          "statistic": "Average", "region": "${region_tokyo}", "matchExact": true, "period": "",
+          "label": "도쿄 replica"
+        }
+      ]
+    },
+
+    {
+      "id": 30,
+      "type": "row",
+      "title": "도쿄 리소스 상세",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "collapsed": false
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "도쿄 ECS CPU / 메모리",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "CPUUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_tokyo}", "ServiceName": "${svc_web_tokyo}" },
+          "statistic": "Average", "region": "${region_tokyo}", "matchExact": true, "period": "",
+          "label": "CPU"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "MemoryUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_tokyo}", "ServiceName": "${svc_web_tokyo}" },
+          "statistic": "Average", "region": "${region_tokyo}", "matchExact": true, "period": "",
+          "label": "메모리"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "도쿄 Valkey CPU",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+%{ for i, node in valkey_tokyo ~}
+%{ if i > 0 },%{ endif ~}
+        {
+          "refId": "T${i}",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ElastiCache", "metricName": "EngineCPUUtilization",
+          "dimensions": { "CacheClusterId": "${node}" },
+          "statistic": "Average", "region": "${region_tokyo}", "matchExact": true, "period": "",
+          "label": "${node}"
+        }
+%{ endfor ~}
+      ]
+    }
+  ]
+}

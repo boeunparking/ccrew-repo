@@ -1,0 +1,527 @@
+{
+  "uid": "cloud-duck-seoul",
+  "title": "cloud-duck / 서울 (Active) 상세",
+  "description": "실제 트래픽을 받는 서울 리전의 계층별 상세 지표. ALB → ECS → RDS/Valkey → 비동기(SQS/Lambda) 순서.",
+  "tags": ["cloud-duck", "seoul"],
+  "timezone": "Asia/Seoul",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "ALB (진입점)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "요청 수 / 응답 시간",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "응답시간 p95" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "custom.axisPlacement", "value": "right" }
+            ]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["mean", "max"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "RequestCount",
+          "dimensions": { "LoadBalancer": "${alb_seoul}" },
+          "statistic": "Sum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "요청 수"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "TargetResponseTime",
+          "dimensions": { "LoadBalancer": "${alb_seoul}" },
+          "statistic": "p95", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "응답시간 p95"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "타겟 상태 (web / admin)",
+      "description": "unhealthy 가 0 이 아니면 헬스체크 실패 중인 태스크가 있다는 뜻이다.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0, "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["lastNotNull", "min"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "HealthyHostCount",
+          "dimensions": { "LoadBalancer": "${alb_seoul}", "TargetGroup": "${tg_web}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "web healthy"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "UnHealthyHostCount",
+          "dimensions": { "LoadBalancer": "${alb_seoul}", "TargetGroup": "${tg_web}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "web unhealthy"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ApplicationELB", "metricName": "HealthyHostCount",
+          "dimensions": { "LoadBalancer": "${alb_seoul}", "TargetGroup": "${tg_admin}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "admin healthy"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "row",
+      "title": "ECS Fargate",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "collapsed": false
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "CPU 사용률",
+      "description": "오토스케일링 타겟은 60%. 80% 5분 지속이면 CloudWatch 알람이 Slack 으로 간다.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 60 }, { "color": "red", "value": 80 }] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["mean", "max"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "CPUUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_seoul}", "ServiceName": "${svc_web}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "web"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "CPUUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_seoul}", "ServiceName": "${svc_admin}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "admin (Spot)"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "CPUUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_seoul}", "ServiceName": "${svc_batch}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "batch (Spot)"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "메모리 사용률",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 80 }] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["mean", "max"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "MemoryUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_seoul}", "ServiceName": "${svc_web}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "web"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "MemoryUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_seoul}", "ServiceName": "${svc_admin}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "admin (Spot)"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ECS", "metricName": "MemoryUtilization",
+          "dimensions": { "ClusterName": "${ecs_cluster_seoul}", "ServiceName": "${svc_batch}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "batch (Spot)"
+        }
+      ]
+    },
+
+    {
+      "id": 20,
+      "type": "row",
+      "title": "RDS (MySQL 8.0, Multi-AZ + Read Replica)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "collapsed": false
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "CPU / 연결 수",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 19 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*CPU.*" },
+            "properties": [{ "id": "unit", "value": "percent" }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "CPUUtilization",
+          "dimensions": { "DBInstanceIdentifier": "${rds_primary}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "primary CPU"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "CPUUtilization",
+          "dimensions": { "DBInstanceIdentifier": "${rds_replica_seoul}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "replica CPU"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "DatabaseConnections",
+          "dimensions": { "DBInstanceIdentifier": "${rds_primary}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "primary 연결"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "여유 메모리 / 여유 스토리지",
+      "description": "FreeStorageSpace 가 계속 내려가면 20GB 할당량이 부족하다는 신호다.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 19 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "FreeableMemory",
+          "dimensions": { "DBInstanceIdentifier": "${rds_primary}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "primary 여유 메모리"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "FreeStorageSpace",
+          "dimensions": { "DBInstanceIdentifier": "${rds_primary}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "primary 여유 스토리지"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "IOPS",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 19 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "iops", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "ReadIOPS",
+          "dimensions": { "DBInstanceIdentifier": "${rds_primary}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "primary read"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "WriteIOPS",
+          "dimensions": { "DBInstanceIdentifier": "${rds_primary}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "primary write"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/RDS", "metricName": "ReadIOPS",
+          "dimensions": { "DBInstanceIdentifier": "${rds_replica_seoul}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "replica read"
+        }
+      ]
+    },
+
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Valkey 캐시",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "collapsed": false
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "CPU / 메모리 사용률",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["mean", "max"], "placement": "bottom" } },
+      "targets": [
+%{ for i, node in valkey_seoul ~}
+%{ if i > 0 },%{ endif ~}
+        {
+          "refId": "C${i}",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ElastiCache", "metricName": "EngineCPUUtilization",
+          "dimensions": { "CacheClusterId": "${node}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "${node} CPU"
+        },
+        {
+          "refId": "M${i}",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ElastiCache", "metricName": "DatabaseMemoryUsagePercentage",
+          "dimensions": { "CacheClusterId": "${node}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "${node} 메모리"
+        }
+%{ endfor ~}
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "히트 / 미스 / 연결 수",
+      "description": "미스 비율이 높으면 캐시가 제 역할을 못 하고 있다는 뜻 — TTL 이나 키 설계를 의심한다.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["sum"], "placement": "bottom" } },
+      "targets": [
+%{ for i, node in valkey_seoul ~}
+%{ if i > 0 },%{ endif ~}
+        {
+          "refId": "H${i}",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ElastiCache", "metricName": "CacheHits",
+          "dimensions": { "CacheClusterId": "${node}" },
+          "statistic": "Sum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "${node} hit"
+        },
+        {
+          "refId": "X${i}",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ElastiCache", "metricName": "CacheMisses",
+          "dimensions": { "CacheClusterId": "${node}" },
+          "statistic": "Sum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "${node} miss"
+        },
+        {
+          "refId": "N${i}",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/ElastiCache", "metricName": "CurrConnections",
+          "dimensions": { "CacheClusterId": "${node}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "${node} 연결"
+        }
+%{ endfor ~}
+      ]
+    },
+
+    {
+      "id": 40,
+      "type": "row",
+      "title": "비동기 처리 (이미지 검수)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "collapsed": false
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "SQS 큐 상태",
+      "description": "DLQ 에 메시지가 하나라도 들어오면 Lambda 가 반복 실패했다는 뜻이라 확인이 필요하다.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "가장 오래된 메시지 나이" },
+            "properties": [{ "id": "unit", "value": "s" }, { "id": "custom.axisPlacement", "value": "right" }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["max"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/SQS", "metricName": "ApproximateNumberOfMessagesVisible",
+          "dimensions": { "QueueName": "${sqs_queue}" },
+          "statistic": "Maximum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "대기 메시지"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/SQS", "metricName": "ApproximateNumberOfMessagesVisible",
+          "dimensions": { "QueueName": "${sqs_dlq}" },
+          "statistic": "Maximum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "DLQ (실패)"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/SQS", "metricName": "ApproximateAgeOfOldestMessage",
+          "dimensions": { "QueueName": "${sqs_queue}" },
+          "statistic": "Maximum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "가장 오래된 메시지 나이"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Lambda 실행",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
+      "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*실행시간.*" },
+            "properties": [{ "id": "unit", "value": "ms" }, { "id": "custom.axisPlacement", "value": "right" }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["sum", "max"], "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/Lambda", "metricName": "Invocations",
+          "dimensions": { "FunctionName": "${lambda_moderation}" },
+          "statistic": "Sum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "이미지검수 호출"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/Lambda", "metricName": "Errors",
+          "dimensions": { "FunctionName": "${lambda_moderation}" },
+          "statistic": "Sum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "이미지검수 에러"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/Lambda", "metricName": "Duration",
+          "dimensions": { "FunctionName": "${lambda_moderation}" },
+          "statistic": "Average", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "이미지검수 실행시간"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "cloudwatch", "uid": "${ds_uid}" },
+          "queryMode": "Metrics", "metricQueryType": 0, "metricEditorMode": 0,
+          "namespace": "AWS/Lambda", "metricName": "Invocations",
+          "dimensions": { "FunctionName": "${lambda_log_cleanup}" },
+          "statistic": "Sum", "region": "${region_seoul}", "matchExact": true, "period": "",
+          "label": "로그정리 호출"
+        }
+      ]
+    }
+  ]
+}

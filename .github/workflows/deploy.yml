@@ -240,6 +240,28 @@ jobs:
 
       - run: terraform init -input=false
 
+      # Grafana provider 는 워크스페이스 서비스계정 토큰으로 인증하는데, 그 토큰을
+      # 만드는 것도 같은 apply 다. 토큰 값이 아직 확정되지 않은 상태에서는 plan 시점에
+      # provider 를 구성할 수 없어서 대시보드 리소스가 이렇게 죽는다:
+      #
+      #     Error: the Grafana client is required for this resource.
+      #            Set the auth and url provider attributes
+      #
+      # 걸리는 경우가 두 가지다 — (1) 최초 구축, (2) 20일마다 오는 토큰 교체
+      # (grafana-dashboards.tf 의 time_rotating). 특히 (2)는 아무것도 안 건드려도
+      # 주기적으로 찾아오므로, 사람이 그때마다 -target 을 치게 두면 안 된다.
+      #
+      # 그래서 토큰까지만 먼저 apply 해서 값을 확정한 뒤 전체 plan 으로 넘어간다.
+      # 위 ecr 잡이 같은 닭-달걀 이유로 -target 을 쓰는 것과 같은 패턴이다.
+      # 이미 유효한 토큰이 있으면 "변경 없음"으로 몇 초 만에 끝난다.
+      # enable_grafana=false 면 대상 리소스가 없어 경고만 남기고 통과한다.
+      - name: Grafana 인증 토큰 선행 apply
+        run: |
+          terraform apply -auto-approve -input=false \
+            -var "image_tag_web=$IMAGE_TAG" \
+            -var "image_tag_batch=$IMAGE_TAG" \
+            -target=aws_grafana_workspace_service_account_token.tf
+
       # plan 을 파일로 떠서 그대로 apply 한다. plan 과 apply 사이에 상태가 달라져
       # "계획에 없던 삭제"가 실행되는 걸 막고, 로그에 무엇이 바뀔지가 남는다.
       # -var 는 plan 에만 붙인다 — 저장된 플랜을 apply 할 때는 변수를 다시 받지 않는다

@@ -120,6 +120,31 @@ resource "aws_cognito_identity_provider" "google" {
     nickname = "name"
     username = "sub"
   }
+
+  # provider_type = "Google" 이면 Cognito 가 아래 6개 엔드포인트 필드를 자기가 채운다.
+  # 우리는 코드에 안 적었으니 terraform 은 그걸 "지워야 할 값"으로 보고 매 plan 마다
+  # 삭제 diff 를 만든다(provider 알려진 이슈 #4831, #24620).
+  #
+  # 적용해도 해결되지 않는다 — AWS 가 곧바로 같은 값을 다시 채워서 다음 plan 에 또 뜬다.
+  # 실제로 이 리소스는 2026-08-24 14:56 에 업데이트됐는데도 직후 plan 에 같은 diff 가
+  # 그대로 남아 있었다. 즉 장애 위험이 아니라 영구 노이즈이고, 방치하면 매 배포마다
+  # 헛된 UpdateIdentityProvider 호출이 나가고 plan 에 상시 1건이 떠서 진짜 변경을 가린다.
+  #
+  # ⚠ ignore_changes = [provider_details] 로 통째로 막으면 안 된다.
+  #   그러면 client_secret 변경까지 무시돼서, GitHub Secrets 의 GOOGLE_CLIENT_SECRET 을
+  #   교체해도 terraform 이 반영하지 않고 구글 로그인이 조용히 깨진다.
+  #   그래서 AWS 가 채우는 6개 키만 지목해서 무시한다 — client_id / client_secret /
+  #   authorize_scopes 는 계속 추적된다.
+  lifecycle {
+    ignore_changes = [
+      provider_details["attributes_url"],
+      provider_details["attributes_url_add_attributes"],
+      provider_details["authorize_url"],
+      provider_details["oidc_issuer"],
+      provider_details["token_request_method"],
+      provider_details["token_url"],
+    ]
+  }
 }
 
 locals {

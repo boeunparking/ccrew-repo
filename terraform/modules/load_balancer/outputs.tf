@@ -2,6 +2,14 @@ output "alb_tg_arn" {
   value = aws_lb_target_group.tf_web_tg.arn
 }
 
+# HealthyHostCount / UnHealthyHostCount 는 LoadBalancer 와 TargetGroup 두 dimension 을
+# 함께 줘야 나오는 지표다. CloudWatch 가 받는 형식은 전체 ARN 이 아니라 suffix 다
+# (targetgroup/tf-web-tg/xxxx).
+output "alb_tg_arn_suffix" {
+  description = "타겟그룹 ARN suffix (CloudWatch TargetGroup dimension)"
+  value       = aws_lb_target_group.tf_web_tg.arn_suffix
+}
+
 output "alb_arn_suffix" {
   value = aws_lb.tf_alb.arn_suffix
 }
