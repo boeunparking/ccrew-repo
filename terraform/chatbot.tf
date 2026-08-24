@@ -22,7 +22,7 @@
 variable "enable_slack_alerts" {
   description = "Chatbot으로 Slack 알림 전송 여부. 콘솔에서 Slack 워크스페이스 인증을 먼저 해야 켤 수 있다"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "slack_team_id" {

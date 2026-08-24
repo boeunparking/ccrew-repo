@@ -57,12 +57,6 @@ resource "random_password" "db" {
   override_special = "!#$%^&*()-_=+"
 }
 
-# destroy 때 만드는 최종 스냅샷 이름의 접미사. 아래 aws_db_instance.primary 참고.
-resource "random_id" "final_snapshot" {
-  count       = var.create_primary ? 1 : 0
-  byte_length = 4
-}
-
 resource "aws_secretsmanager_secret" "db" {
   count                   = local.create_secret_effective ? 1 : 0
   name                    = "${var.project}/${var.name}/rds/admin"
@@ -119,13 +113,19 @@ resource "aws_db_instance" "primary" {
 
   auto_minor_version_upgrade = true
   deletion_protection        = false
-  skip_final_snapshot = false
-  # 계정+리전에서 유일해야 하는 이름이다. 고정 이름을 쓰면 지난번 destroy 가 남긴
-  # 스냅샷과 부딪혀 DBSnapshotAlreadyExists 로 destroy 가 통째로 막힌다
-  # (2026-08-22 재구축에서 실제로 발생). 스택 수명마다 다른 접미사를 붙여 피한다 —
-  # random_id 는 state 에 남아 apply 를 반복해도 안 바뀌고, destroy 후 재구축하면
-  # state 가 새로 시작하므로 자연히 새 값이 된다.
-  final_snapshot_identifier = "${var.project}-${var.name}-final-${random_id.final_snapshot[0].hex}"
+
+  # destroy 시 최종 스냅샷을 남기지 않는다.
+  #
+  # 남기면 destroy 는 "성공"인데 스냅샷은 계속 남아 과금된다. 아무도 안 지우면
+  # 재구축을 반복할수록 쌓이고, 정작 필요할 때 어느 게 어느 시점인지 알 수 없다.
+  # 이름 충돌 문제도 있었다 — 고정 이름을 쓰면 지난 destroy 가 남긴 스냅샷과
+  # 부딪혀 DBSnapshotAlreadyExists 로 destroy 가 통째로 막힌다(2026-08-22 실제 발생).
+  #
+  # ⚠ 대신 destroy 하면 DB 내용이 그대로 사라진다. 되돌릴 수 없다.
+  #    이 스택의 DB 는 앱이 부팅할 때 스키마를 다시 만들고(web/src/schema.js),
+  #    보관해야 할 데이터가 생기면 backup_retention_period 의 자동 백업이나
+  #    수동 스냅샷으로 따로 챙기는 전제다.
+  skip_final_snapshot = true
 
   performance_insights_enabled = false # t4g.micro 프리티어 고려
 

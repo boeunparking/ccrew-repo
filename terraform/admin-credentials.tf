@@ -1,9 +1,14 @@
 ############################################################
-# 관리자 계정 자격증명 (web/server.js의 warmup 시드용)
+# 관리자 계정 자격증명 (Cognito 부트스트랩 admin 계정)
+#
+# 예전엔 이 값이 ECS 컨테이너로 주입돼 web/server.js의 warmup이 부팅할 때마다
+# bcrypt로 해싱해 DB에 upsert했다. 지금은 회원 관리 자체가 Cognito로 넘어갔으므로
+# 이 값은 apply 시점에 딱 한 번, terraform이 Cognito에 admin 계정을 만들고
+# admin 그룹에 넣는 데만 쓰인다 — ECS 태스크는 더 이상 이 값을 몰라도 된다.
 #
 # 코드에 기본값으로 박아두면 소스와 git 히스토리에 영구히 남아, 저장소를 볼 수 있는
 # 사람은 누구나 운영 admin으로 로그인할 수 있게 된다. 그래서 비밀번호는 여기서
-# 생성해 Secrets Manager에 넣고, ECS가 컨테이너 시작 시점에 주입한다.
+# 생성해 Secrets Manager에도 남겨둔다(사람이 처음 로그인할 때 조회하는 용도).
 #
 # 비밀번호 확인 방법(최초 로그인 시):
 #   aws secretsmanager get-secret-value --secret-id cloud-duck/admin/credentials \
@@ -15,13 +20,10 @@
 # admin_password 로 직접 정해도 이 성질은 같다 — 값의 출처만 달라진다.
 #
 # 비밀번호를 직접 정하려면 admin_password 변수를 쓴다(아래 참고).
-# 바꾼 뒤에는 태스크가 재시작돼야 반영된다 — warmup 이 부팅할 때만 시드하기 때문이다:
-#   aws ecs update-service --cluster tf-cluster --service clduck-web   --force-new-deployment --region ap-northeast-2
-#   aws ecs update-service --cluster tf-cluster --service clduck-admin --force-new-deployment --region ap-northeast-2
 ############################################################
 
 variable "admin_email" {
-  description = "관리자 계정 이메일 (warmup 시드용)"
+  description = "관리자 계정 이메일 (Cognito 부트스트랩 admin 계정의 username)"
   type        = string
   default     = "admin@cloudduck.cloud"
 }
@@ -69,7 +71,7 @@ resource "random_password" "admin" {
 
 resource "aws_secretsmanager_secret" "admin" {
   name        = "${var.project}/admin/credentials"
-  description = "cloud-duck 관리자 계정 (web/server.js warmup 시드)"
+  description = "cloud-duck Cognito 부트스트랩 admin 계정 (사람이 최초 로그인 시 조회하는 용도 — ECS는 더 이상 이 값을 읽지 않는다)"
 
   # destroy 후 재구축 시 같은 이름을 바로 다시 쓸 수 있도록 복구 대기 없이 삭제.
   # (7일 대기로 두면 재구축 때 "already scheduled for deletion"으로 apply가 막힌다)
@@ -96,33 +98,52 @@ resource "aws_secretsmanager_secret_version" "admin" {
     # ignore_changes 를 걸면 그 경로가 막힌다. 비밀번호를 가진 사람이 한 번 정하면
     # 이후 누가 apply 하든 값이 유지된다. 공유할 것도, 맞출 것도 없다.
     #
-    # 대가: terraform 으로는 비밀번호를 못 바꾼다. secrets.auto.tfvars 를 고쳐도
-    # plan 에 안 잡힌다. 바꾸려면 아래 둘 중 하나를 쓴다.
+    # 대가: terraform 으로는 이 시크릿의 값을 못 바꾼다. secrets.auto.tfvars 를 고쳐도
+    # plan 에 안 잡힌다. 그리고 이제는 이 시크릿이 "기록"일 뿐 로그인의 source of
+    # truth가 아니다 — 실제 비밀번호는 Cognito가 들고 있다(아래 aws_cognito_user).
+    # 그래서 admin 비밀번호를 바꾸려면 Cognito 쪽도 같이 바꿔야 한다:
     #
-    #   방법 1) 값만 직접 갱신 (권장)
+    #   1) Cognito의 실제 비밀번호 변경 (필수)
+    #     aws cognito-idp admin-set-user-password --user-pool-id <POOL_ID> \
+    #       --username admin@cloudduck.cloud --password "새비밀번호" --permanent \
+    #       --region ap-northeast-2
+    #
+    #   2) 이 Secrets Manager 값도 맞춰서 기록해두고 싶다면 (선택, 사람이 참고하는 용도일 뿐)
     #     aws secretsmanager put-secret-value --secret-id cloud-duck/admin/credentials \
     #       --region ap-northeast-2 \
     #       --secret-string '{"email":"admin@cloudduck.cloud","password":"새비밀번호"}'
-    #
-    #   방법 2) terraform 이 다시 쓰게 만들기 (secrets.auto.tfvars 값을 반영하고 싶을 때)
-    #     terraform apply -replace=aws_secretsmanager_secret_version.admin
-    #
-    # 어느 쪽이든 warmup 이 부팅할 때만 시드하므로 태스크 재시작이 필요하다:
-    #   aws ecs update-service --cluster tf-cluster --service clduck-web   --force-new-deployment --region ap-northeast-2
-    #   aws ecs update-service --cluster tf-cluster --service clduck-admin --force-new-deployment --region ap-northeast-2
     ignore_changes = [secret_string]
   }
 }
 
-locals {
-  # 태스크 정의에 꽂을 형태. 서울에만 넣는다 —
-  # 도쿄는 읽기 전용 replica라 warmup의 admin 시드(INSERT)가 어차피 항상 실패하고,
-  # ECS는 같은 리전의 시크릿만 읽을 수 있어서 서울 ARN을 도쿄에 주면 태스크가 아예 안 뜬다.
-  #
-  # secret_version이 아니라 secret의 ARN을 써야 한다 — 이유는 oauth.tf의 locals 주석 참고.
-  # (version을 참조하면 CI의 -target apply가 GetSecretValue 권한이 없어 실패한다)
-  web_admin_secrets = [
-    { name = "ADMIN_EMAIL", valueFrom = "${aws_secretsmanager_secret.admin.arn}:email::" },
-    { name = "ADMIN_PASSWORD", valueFrom = "${aws_secretsmanager_secret.admin.arn}:password::" },
-  ]
+# Cognito 부트스트랩 admin 계정. 최초 apply 시점에 딱 한 번 만들어지고, 그 뒤로는
+# terraform이 비밀번호를 다시 쓰지 않는다(아래 ignore_changes).
+#
+# ⚠ 절대 -replace 하지 말 것. aws_cognito_user는 재생성되면 새 sub(Cognito
+#   Username)를 받는다 — 이 admin이 이미 등록한 auctions/bids는 users(id)로 옛
+#   sub를 참조하고 있어서, replace 후 재로그인하면 "다른 사람"이 되어 자기가 등록한
+#   경매/입찰과의 연결이 끊긴다.
+resource "aws_cognito_user" "admin" {
+  user_pool_id = aws_cognito_user_pool.this.id
+  username     = var.admin_email
+  password     = coalesce(var.admin_password, random_password.admin.result)
+
+  # 실존하지 않을 수 있는 admin_email로 Cognito 기본 초대 메일을 보내지 않는다.
+  message_action = "SUPPRESS"
+
+  attributes = {
+    email          = var.admin_email
+    email_verified = "true"
+    nickname       = "admin"
+  }
+
+  lifecycle {
+    ignore_changes = [password]
+  }
+}
+
+resource "aws_cognito_user_in_group" "admin" {
+  user_pool_id = aws_cognito_user_pool.this.id
+  username     = aws_cognito_user.admin.username
+  group_name   = aws_cognito_user_group.admin.name
 }

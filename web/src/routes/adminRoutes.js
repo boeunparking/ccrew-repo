@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { S3Client, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 import {
   listAuctions, countAllBids, claims, securityLogs, suspiciousBids, secondsLeft, isEnded,
-  deleteAuction,
+  deleteAuction, listHiddenAuctions, restoreAuction,
 } from '../store.js';
 import { requireAuth, requireAdmin } from '../authMiddleware.js';
 import { connectionCount } from '../realtime.js';
@@ -88,6 +88,19 @@ router.delete('/auctions/:id', async (req, res) => {
   }
 
   res.json({ id, deleted: true });
+});
+
+// 반려 큐 — image_moderation Lambda가 REJECTED로 판정해 자동 비공개된 경매들.
+router.get('/moderation', async (_req, res) => {
+  const items = await listHiddenAuctions();
+  res.json({ items });
+});
+
+// 관리자가 검토 후 오탐(false positive)이라고 판단하면 다시 공개한다.
+router.patch('/moderation/:id/restore', async (req, res) => {
+  const restored = await restoreAuction(req.params.id);
+  if (!restored) return res.status(404).json({ error: '비공개 처리된 경매가 아닙니다' });
+  res.json({ id: req.params.id, hidden: false });
 });
 
 router.get('/stats/popular', async (_req, res) => {

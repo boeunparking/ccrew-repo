@@ -51,7 +51,7 @@ module "admin_service" {
   cluster_id         = aws_ecs_cluster.tf_cluster.id
   cluster_name       = aws_ecs_cluster.tf_cluster.name
   ecr_repository_url = aws_ecr_repository.tf_web_ecr.repository_url # web과 동일한 이미지
-  image_tag          = var.image_tag_web
+  image_tag          = local.image_tag_web
   execution_role_arn = module.ecs_execution.iam_role_arn
   task_role_arn      = module.ecs_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.admin.name

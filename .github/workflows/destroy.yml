@@ -1,0 +1,139 @@
+# .github/workflows/destroy.yml
+#
+# 전체 인프라 삭제. 지우기 전에 되돌릴 수 없는 데이터를 먼저 대피시킨다.
+#
+#   1. 백업  : 업로드 이미지 + 프론트 정적 파일을 bootstrap 의 백업 버킷으로 sync
+#   2. 삭제  : terraform destroy
+#
+# 복원은 .github/workflows/restore.yml 이 맡는다 (재구축 후 수동 실행).
+#
+# 왜 "버킷을 살려두기"가 아니라 "복사본을 남기기"인가:
+#   업로드 버킷은 메인 스택의 고객관리형 KMS 키(aws_kms_key.seoul)로 암호화돼 있다.
+#   버킷만 destroy 대상에서 빼도 그 키는 삭제 예약(7일)에 들어가고, 키가 사라지는
+#   순간 버킷은 멀쩡한데 안의 객체가 전부 영구 복호화 불가가 된다.
+#   sync 로 복사하면 목적지 버킷의 키(AES256)로 다시 암호화되므로 원본 키의
+#   운명과 무관해진다.
+#
+# 이 워크플로우가 지우지 않는 것:
+#   terraform-bootstrap/ (state 버킷 + OIDC 롤 + 백업 버킷). 별도 스택이고
+#   prevent_destroy 가 걸려 있다. 이걸 지우면 재구축 수단 자체가 사라진다.
+
+name: Destroy (전체 인프라 삭제)
+
+# push 트리거 없음 — 사람이 Actions 탭에서 직접 실행할 때만 돈다.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '정말 지우려면 destroy 라고 정확히 입력'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+# deploy.yml 과 같은 그룹이다. 배포가 도는 중에 destroy 가 끼어들면 state 가 엉킨다.
+# cancel-in-progress 는 false — 앞 작업을 중간에 끊는 게 제일 나쁘다.
+concurrency:
+  group: terraform-clduck
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  TF_VERSION: '1.15.7'
+  # destroy 도 plan 을 거치므로 변수 validation 이 그대로 돈다.
+  # google_client_secret 은 빈 값을 거부하도록 돼 있어서 안 넘기면 destroy 가 시작도 못 한다.
+  TF_VAR_google_client_secret: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    # CloudFront 배포 삭제만 15~20분(비활성화 후 삭제), Global Accelerator·
+    # Client VPN·RDS 도 각각 몇 분씩 걸린다. 기본 6시간보다는 짧게, 넉넉히 잡는다.
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      # 입력값을 run 스크립트에 보간하지 않고 env 로 받는다 — 보간하면 입력에
+      # 따옴표나 세미콜론을 넣어 임의 명령을 실행시킬 수 있다.
+      - name: 확인 문구 검사
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          [ "$CONFIRM" = "destroy" ] || {
+            echo "::error::confirm 에 destroy 를 정확히 입력해야 한다"
+            exit 1
+          }
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-terraform
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - run: terraform init -input=false
+
+      # 버킷 이름을 워크플로우에 박아두지 않고 state 에서 읽는다.
+      # 이미 destroy 된 상태에서 또 돌리면 output 이 없다 — 그건 정상이므로
+      # 실패시키지 않고 백업만 건너뛴다(빈 값으로 sync 해서 백업을 망치는 것보다 낫다).
+      - id: buckets
+        name: 백업 대상 조회
+        run: |
+          uploads=$(terraform output -raw uploads_bucket_name 2>/dev/null || true)
+          frontend=$(terraform output -raw frontend_bucket_name 2>/dev/null || true)
+          echo "uploads=$uploads"   >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          if [ -z "$uploads" ] && [ -z "$frontend" ]; then
+            echo "::warning::state 에 버킷이 없다 — 이미 destroy 된 것으로 보고 백업을 건너뛴다"
+          else
+            echo "업로드=$uploads / 프론트=$frontend"
+          fi
+
+      # 타임스탬프 폴더에 새로 쌓는다(덮어쓰지 않는다).
+      #
+      # 고정 경로에 --delete 로 sync 하면, 실수로 destroy 를 두 번 돌렸을 때
+      # 두 번째 실행이 "이미 비어 있는 원본"을 백업하면서 멀쩡한 첫 백업을
+      # 통째로 지운다. 되돌릴 방법이 없는 종류의 사고라 아예 경로를 분리한다.
+      - name: 백업 → bootstrap 백업 버킷
+        if: steps.buckets.outputs.uploads != '' || steps.buckets.outputs.frontend != ''
+        env:
+          UPLOADS: ${{ steps.buckets.outputs.uploads }}
+          FRONTEND: ${{ steps.buckets.outputs.frontend }}
+        run: |
+          BACKUP="cloud-duck-backup-${{ secrets.AWS_ACCOUNT_ID }}"
+          # 사전순 정렬 = 시간순이 되도록 ISO 형식으로 찍는다(restore 가 tail -1 로 고른다).
+          STAMP="$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_RUN_ID}"
+
+          if [ -n "$UPLOADS" ]; then
+            echo "업로드 이미지 → s3://$BACKUP/uploads/$STAMP/"
+            aws s3 sync "s3://$UPLOADS/" "s3://$BACKUP/uploads/$STAMP/"
+          fi
+          if [ -n "$FRONTEND" ]; then
+            echo "프론트 정적 파일 → s3://$BACKUP/frontend/$STAMP/"
+            aws s3 sync "s3://$FRONTEND/" "s3://$BACKUP/frontend/$STAMP/"
+          fi
+          echo "백업 완료: $STAMP"
+
+      # 여기서도 -var 로 태그를 넘겨야 한다. destroy 도 plan 단계에서 data 소스를
+      # 읽는데, 태그가 없으면 data.aws_ecr_image 가 켜져서(count=1) ECR 최신
+      # 이미지를 찾으려 든다. 이미 비었거나 없으면 destroy 가 시작도 못 한다.
+      # 값 자체는 쓰이지 않으므로 아무거나 넣어도 된다.
+      - name: terraform destroy
+        run: |
+          terraform destroy -auto-approve -input=false \
+            -var "image_tag_web=unused" \
+            -var "image_tag_batch=unused"
+
+      - name: 안내
+        if: success()
+        run: |
+          echo "삭제 완료. 다시 세우려면 Deploy 워크플로우를 실행할 것."
+          echo "업로드 이미지는 Restore 워크플로우로 되돌린다(프론트는 Deploy 가 알아서 다시 채운다)."

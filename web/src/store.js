@@ -77,81 +77,18 @@ export function toListItem(a) {
 // ========================================
 // users
 // ========================================
-export async function findUserByEmail(email) {
-  const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
-  if (!rows[0]) return null;
-  return mapUserRow(rows[0]);
-}
-
-export async function findUserById(id) {
-  const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
-  if (!rows[0]) return null;
-  return mapUserRow(rows[0]);
-}
-
-// 재배포 때마다 같은 admin 계정으로 다시 뜨는 걸 허용한다 (server.js warmup용).
-export async function upsertUser(user) {
+// Cognito가 회원가입/로그인을 전부 맡는다 — 여기 남은 건 인증된 사용자의 프로필을
+// 우리 DB에도 한 줄 채워 넣는 것뿐이다(auctions.seller_id/bids.user_id가 users(id)를
+// 참조하는 FK라서 필요하다). id는 Cognito의 sub(UUID)를 그대로 쓴다.
+// 호출부(authMiddleware.js의 touchUserRow)가 1시간 TTL로 dedupe하므로 여기서는
+// 매번 단순하게 upsert만 한다.
+export async function ensureUserRow(user) {
   await pool.query(
-    `INSERT INTO users (id, email, password_hash, nickname, role)
-     VALUES (?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), role = VALUES(role)`,
-    [user.id, user.email, user.passwordHash, user.nickname, user.role],
+    `INSERT INTO users (id, email, nickname)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE email = VALUES(email), nickname = VALUES(nickname)`,
+    [user.sub, user.email, user.nickname],
   );
-}
-
-// password_hash는 null일 수 있다 — 소셜 로그인으로만 들어온 계정은 비밀번호가 없다.
-export async function createUser(user) {
-  await pool.query(
-    'INSERT INTO users (id, email, password_hash, nickname, role) VALUES (?, ?, ?, ?, ?)',
-    [user.id, user.email, user.passwordHash ?? null, user.nickname, user.role],
-  );
-}
-
-// ========================================
-// user_identities — 소셜 계정 ↔ 우리 계정 연결
-// ========================================
-// 공급자가 주는 식별자(sub, id)는 이메일과 달리 바뀌지 않는다.
-// 그래서 "누구인가"는 항상 (provider, provider_user_id)로 판단하고,
-// 이메일은 기존 계정과 이어붙일지 정할 때만 참고한다.
-
-export async function findUserByIdentity(provider, providerUserId) {
-  const [rows] = await pool.query(
-    `SELECT u.* FROM user_identities i
-     JOIN users u ON u.id = i.user_id
-     WHERE i.provider = ? AND i.provider_user_id = ?`,
-    [provider, String(providerUserId)],
-  );
-  if (!rows[0]) return null;
-  return mapUserRow(rows[0]);
-}
-
-// 같은 사람이 두 브라우저에서 동시에 로그인하면 INSERT가 겹칠 수 있다.
-// UNIQUE 제약이 막아주므로, 중복이면 조용히 넘어가고 호출부가 다시 조회한다.
-export async function linkIdentity({ userId, provider, providerUserId, email }) {
-  await pool.query(
-    `INSERT IGNORE INTO user_identities (id, user_id, provider, provider_user_id, email)
-     VALUES (?, ?, ?, ?, ?)`,
-    [crypto.randomUUID(), userId, provider, String(providerUserId), email ?? null],
-  );
-}
-
-/** 마이페이지에서 "연결된 소셜 계정"을 보여줄 때 쓴다. */
-export async function listIdentities(userId) {
-  const [rows] = await pool.query(
-    'SELECT provider, email, created_at FROM user_identities WHERE user_id = ?',
-    [userId],
-  );
-  return rows.map((r) => ({ provider: r.provider, email: r.email, linkedAt: r.created_at }));
-}
-
-function mapUserRow(row) {
-  return {
-    id: row.id,
-    email: row.email,
-    passwordHash: row.password_hash,
-    nickname: row.nickname,
-    role: row.role,
-  };
 }
 
 // ========================================
@@ -170,27 +107,34 @@ function mapAuctionRow(row) {
     sellerId: row.seller_id,
     seller: row.seller_nickname,
     tag: row.tag,
+    hiddenAt: row.hidden_at,
+    hiddenReason: row.hidden_reason,
     images: row.thumbnail_key ? [row.thumbnail_key] : [],
   };
 }
 
 // 목록/필터/정렬은 예전처럼 JS에서 처리한다 — 경매 수가 많지 않은 스코프라 충분하다.
-export async function listAuctions() {
+//
+// hidden_at이 채워진 경매(Rekognition이 REJECTED로 판정한 이미지가 붙은 경매)는
+// 기본적으로 제외한다 — 공개 목록/입찰내역 요약 등 일반 사용자 화면이 이 함수를 쓴다.
+// 관리자 반려 큐(listHiddenAuctions)만 그 경매들을 따로 조회한다.
+export async function listAuctions({ includeHidden = false } = {}) {
   const [rows] = await pool.query(`
     SELECT a.*, u.nickname AS seller_nickname,
       (SELECT image_key FROM auction_images
         WHERE auction_id = a.id ORDER BY sort_order LIMIT 1) AS thumbnail_key
     FROM auctions a
     JOIN users u ON u.id = a.seller_id
+    ${includeHidden ? '' : 'WHERE a.hidden_at IS NULL'}
   `);
   return rows.map(mapAuctionRow);
 }
 
-export async function getAuctionById(id) {
+export async function getAuctionById(id, { includeHidden = false } = {}) {
   const [rows] = await pool.query(
     `SELECT a.*, u.nickname AS seller_nickname
      FROM auctions a JOIN users u ON u.id = a.seller_id
-     WHERE a.id = ?`,
+     WHERE a.id = ? ${includeHidden ? '' : 'AND a.hidden_at IS NULL'}`,
     [id],
   );
   if (!rows[0]) return null;
@@ -202,6 +146,51 @@ export async function getAuctionById(id) {
   );
   auction.images = images.map((i) => i.image_key);
   return auction;
+}
+
+/**
+ * 관리자 반려 큐 (adminRoutes.js GET /admin/moderation).
+ * 비공개 처리된 경매와, 그중 REJECTED로 찍힌 이미지 키를 같이 돌려준다.
+ */
+export async function listHiddenAuctions() {
+  const [rows] = await pool.query(`
+    SELECT a.*, u.nickname AS seller_nickname
+    FROM auctions a
+    JOIN users u ON u.id = a.seller_id
+    WHERE a.hidden_at IS NOT NULL
+    ORDER BY a.hidden_at DESC
+  `);
+
+  const auctions = rows.map(mapAuctionRow);
+  if (!auctions.length) return auctions;
+
+  const [images] = await pool.query(
+    `SELECT auction_id, image_key, moderation_status, moderation_labels
+     FROM auction_images
+     WHERE auction_id IN (?) AND moderation_status = 'REJECTED'`,
+    [auctions.map((a) => a.id)],
+  );
+
+  const rejectedByAuction = new Map();
+  for (const img of images) {
+    if (!rejectedByAuction.has(img.auction_id)) rejectedByAuction.set(img.auction_id, []);
+    rejectedByAuction.get(img.auction_id).push({ imageKey: img.image_key, labels: img.moderation_labels });
+  }
+
+  return auctions.map((a) => ({ ...a, rejectedImages: rejectedByAuction.get(a.id) ?? [] }));
+}
+
+/**
+ * 관리자가 반려 큐를 검토한 뒤 "문제 없음"으로 판단했을 때 다시 공개한다.
+ * 이미지 자체(moderation_status)는 REJECTED로 남겨둔다 — Rekognition 판정 이력은
+ * 그대로 보존하고, 사람이 그 판정을 오버라이드했다는 사실만 hidden_at으로 표현한다.
+ */
+export async function restoreAuction(id) {
+  const [result] = await pool.query(
+    'UPDATE auctions SET hidden_at = NULL, hidden_reason = NULL WHERE id = ? AND hidden_at IS NOT NULL',
+    [id],
+  );
+  return result.affectedRows > 0;
 }
 
 export async function createAuction(auction) {
@@ -221,6 +210,52 @@ export async function createAuction(auction) {
       'INSERT INTO auction_images (id, auction_id, image_key, sort_order) VALUES ?',
       [rows],
     );
+
+    await applyPendingModerationRejections(auction.id, auction.images);
+  }
+}
+
+/**
+ * 업로드(S3 presign)는 경매 생성보다 먼저 일어나므로, 이미지가 REJECTED로 판정되는
+ * 시점이 이 경매를 만들기 "전"일 수도 있다 — Rekognition은 보통 사용자가 나머지 폼을
+ * 채우는 몇 초~몇십 초 안에 끝나기 때문에 이 케이스가 오히려 흔하다.
+ * image_moderation Lambda는 그때 auction_images 행이 아직 없어 직접 갱신할 수 없으므로
+ * image_moderation_rejections에 image_key만으로 독립적으로 남겨둔다 — 여기서 그걸 조회해
+ * 방금 만든 경매에 즉시 반영한다.
+ *
+ * (반대 순서 — 경매가 이미 존재하는 상태에서 판정이 나중에 도착하는 경우 — 는 Lambda가
+ * auction_images/auctions를 직접 UPDATE해서 처리한다.)
+ */
+async function applyPendingModerationRejections(auctionId, imageKeys) {
+  const [rejections] = await pool.query(
+    'SELECT image_key, labels FROM image_moderation_rejections WHERE image_key IN (?)',
+    [imageKeys],
+  );
+  if (!rejections.length) return;
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    for (const r of rejections) {
+      await conn.query(
+        `UPDATE auction_images SET moderation_status = 'REJECTED', moderation_labels = ?, moderated_at = NOW()
+         WHERE auction_id = ? AND image_key = ?`,
+        [r.labels, auctionId, r.image_key],
+      );
+    }
+
+    await conn.query(
+      'UPDATE auctions SET hidden_at = NOW(), hidden_reason = ? WHERE id = ? AND hidden_at IS NULL',
+      ['업로드 이미지가 자동 검수에서 반려되었습니다', auctionId],
+    );
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
   }
 }
 

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CloudDuck 클라우드덕후 — 피규어 경매</title>
+    <!--
+      API 주소 런타임 설정. 번들보다 먼저 실행돼야 한다.
+      vite가 module 스크립트를 head로 끌어올리므로, 이 파일도 head에 둬서
+      실행 순서를 defer 규칙에 의존하지 않고 확실히 앞에 오게 한다.
+    -->
+    <script src="/config.js"></script>
+    <link
+      rel="stylesheet"
+      as="style"
+      crossorigin
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

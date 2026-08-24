@@ -19,7 +19,7 @@
 variable "enable_grafana" {
   description = "Amazon Managed Grafana 워크스페이스 생성 여부. 사용자 수 기반 정액 과금이라 기본은 끔"
   type        = bool
-  default     = false
+  default     = true
 }
 
 # Grafana가 CloudWatch 지표/로그를 읽을 때 사용할 역할.

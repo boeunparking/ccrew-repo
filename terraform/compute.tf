@@ -1,13 +1,29 @@
 ### 컴퓨트 레이어 변수 ###
 # (hayun 브랜치 main.tf에 있던 변수들 - 여기로 옮김)
 
+# 이미지 태그.
+#
+# 값을 안 넘기면(null) ECR 에 마지막으로 푸시된 이미지를 알아서 찾아 쓴다.
+# 그래서 평소엔 아무 데도 태그를 적어 둘 필요가 없다.
+#
+# 왜 이렇게 바꿨나:
+#   예전엔 terraform.tfvars 에 커밋 SHA 를 직접 적어 뒀다. 그런데 그 파일은
+#   .gitignore 의 *.tfvars 로 제외돼 있어서 CI 가 갱신해 줄 수 없었고,
+#   CI 는 CI 대로 -var 로 최신 SHA 를 넘겼다. 결과적으로 파일에 적힌 값은
+#   항상 옛날 것이었고, 사람이 로컬에서 전체 apply 를 한 번 하는 순간
+#   방금 배포된 이미지가 조용히 이전 버전으로 롤백됐다.
+#
+#   CI 는 지금도 커밋 SHA 를 명시적으로 넘긴다(그래야 "이 커밋이 이 이미지"가
+#   보장된다). 자동 조회는 값을 모르는 로컬 apply 를 위한 안전망이다.
 variable "image_tag_web" {
   type        = string
-  description = "web ECR 이미지 태그 (CI/CD 파이프라인에서 전달)"
+  description = "web ECR 이미지 태그. 비워두면 ECR 최신 이미지를 자동으로 쓴다"
+  default     = null
 }
 variable "image_tag_batch" {
   type        = string
-  description = "batch ECR 이미지 태그 (CI/CD 파이프라인에서 전달)"
+  description = "batch ECR 이미지 태그. 비워두면 ECR 최신 이미지를 자동으로 쓴다"
+  default     = null
 }
 
 variable "certificate_arn" {
@@ -44,13 +60,9 @@ data "aws_iam_policy_document" "ecs_execution_read_db_secrets" {
     resources = [
       module.rds_seoul.secret_arn,
       module.rds_tokyo_replica.secret_arn,
-      # JWT 서명 키 + 소셜 로그인 client_secret (oauth.tf). 도쿄 복제본도 같이 열어준다.
-      local.app_auth_secret_arn_seoul,
-      local.app_auth_secret_arn_tokyo,
-      # 관리자 계정 시드 (admin-credentials.tf).
-      # 여기 빠지면 태스크가 시크릿 주입 단계에서 AccessDenied로 죽어
-      # PROVISIONING↔STOPPED를 무한 반복한다 — 컨테이너 로그도 안 남으므로 원인 찾기가 어렵다.
-      aws_secretsmanager_secret.admin.arn,
+      # JWT 서명 키 + 소셜 로그인 client_secret(oauth.tf), 관리자 계정 시드
+      # (admin-credentials.tf)는 더 이상 ECS 태스크로 주입되지 않는다 — Cognito로
+      # 이전하면서 web 태스크가 필요로 하는 시크릿은 DB 자격증명뿐이다.
     ]
   }
 }
@@ -149,6 +161,34 @@ resource "aws_ecr_repository" "tf_batch_ecr" {
   force_delete = true
 }
 
+# ECR 에 마지막으로 푸시된 이미지 조회.
+#
+# count 로 감싼 이유가 핵심이다 — 태그가 넘어온 경우(=CI)에는 조회 자체를 하지 않는다.
+# 최초 구축처럼 ECR 이 아직 비어 있으면 이 data 소스는 "이미지 없음" 으로 실패하는데,
+# CI 파이프라인은 ECR 을 만든 직후 이미지를 푸시하고 나서 전체 apply 를 하므로
+# 항상 -var 로 태그를 넘긴다. 즉 CI 경로에서는 이 블록이 아예 평가되지 않는다.
+data "aws_ecr_image" "web_latest" {
+  count           = var.image_tag_web == null ? 1 : 0
+  repository_name = aws_ecr_repository.tf_web_ecr.name
+  most_recent     = true
+}
+
+data "aws_ecr_image" "batch_latest" {
+  count           = var.image_tag_batch == null ? 1 : 0
+  repository_name = aws_ecr_repository.tf_batch_ecr.name
+  most_recent     = true
+}
+
+locals {
+  # 넘어온 값이 있으면 그걸 쓰고, 없으면 방금 조회한 최신 이미지의 태그를 쓴다.
+  #
+  # image_tags[0] 을 그냥 쓰는 근거: CI 는 이미지 하나에 커밋 SHA 태그 하나만 붙인다.
+  # 사람이 콘솔에서 같은 이미지에 태그를 하나 더 달면 순서 보장이 없으므로,
+  # 그런 상황이라면 -var 로 명시하는 게 맞다.
+  image_tag_web   = var.image_tag_web != null ? var.image_tag_web : one(data.aws_ecr_image.web_latest[*].image_tags[0])
+  image_tag_batch = var.image_tag_batch != null ? var.image_tag_batch : one(data.aws_ecr_image.batch_latest[*].image_tags[0])
+}
+
 resource "aws_ecr_replication_configuration" "this" {
   replication_configuration {
     rule {
@@ -236,12 +276,14 @@ locals {
     { name = "DB_HOST", value = module.rds_seoul.db_address },
     { name = "DB_PORT", value = "3306" },
     { name = "DB_NAME", value = "cloud_duck" },
-  ], local.web_oauth_environment)
+  ], local.web_cognito_environment)
 
-  seoul_web_secrets = concat([
+  # Cognito로 넘어오면서 JWT_SECRET/GOOGLE_CLIENT_SECRET/ADMIN_* 시크릿 주입이
+  # 전부 없어졌다 — 남은 건 DB 접속 정보뿐이다.
+  seoul_web_secrets = [
     { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
-  ], local.web_auth_secrets_seoul, local.web_admin_secrets)
+  ]
 }
 
 # Task Definition - Web (Fargate)
@@ -253,7 +295,7 @@ module "web_service" {
   cluster_id         = aws_ecs_cluster.tf_cluster.id
   cluster_name       = aws_ecs_cluster.tf_cluster.name
   ecr_repository_url = aws_ecr_repository.tf_web_ecr.repository_url
-  image_tag          = var.image_tag_web
+  image_tag          = local.image_tag_web
   execution_role_arn = module.ecs_execution.iam_role_arn
   task_role_arn      = module.ecs_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.web.name
@@ -292,7 +334,7 @@ module "web_service_tokyo" {
   cluster_id         = aws_ecs_cluster.tf_cluster_tokyo.id
   cluster_name       = aws_ecs_cluster.tf_cluster_tokyo.name
   ecr_repository_url = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region_tokyo}.amazonaws.com/${aws_ecr_repository.tf_web_ecr.name}"
-  image_tag          = var.image_tag_web
+  image_tag          = local.image_tag_web
   execution_role_arn = module.ecs_execution.iam_role_arn
   task_role_arn      = module.ecs_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.web_tokyo.name
@@ -313,13 +355,14 @@ module "web_service_tokyo" {
     { name = "DB_HOST", value = module.rds_tokyo_replica.db_address },
     { name = "DB_PORT", value = "3306" },
     { name = "DB_NAME", value = "cloud_duck" },
-  ], local.web_oauth_environment)
-  # 서울과 같은 JWT 키를 써야 failover 후에도 기존 토큰이 그대로 통한다.
-  # 다만 ARN은 도쿄 복제본을 가리켜야 한다 — ECS는 타 리전 시크릿을 못 읽는다.
-  secrets = concat([
+  ], local.web_cognito_environment)
+  # Cognito User Pool은 서울에만 있는 리전 리소스지만 문제 없다 — user pool id/
+  # client id/domain은 시크릿이 아니라 평문 값이라 리전 복제 없이 그대로 재사용한다.
+  # (토큰 검증은 인터넷으로 JWKS를 fetch하는 방식이라 애초에 리전 종속이 없다.)
+  secrets = [
     { name = "DB_USER", valueFrom = "${module.rds_tokyo_replica.secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${module.rds_tokyo_replica.secret_arn}:password::" },
-  ], local.web_auth_secrets_tokyo)
+  ]
 
   desired_count                 = 2
   launch_type                   = "FARGATE"
@@ -351,7 +394,7 @@ module "batch_service" {
   cluster_id         = aws_ecs_cluster.tf_cluster.id
   cluster_name       = aws_ecs_cluster.tf_cluster.name
   ecr_repository_url = aws_ecr_repository.tf_batch_ecr.repository_url
-  image_tag          = var.image_tag_batch
+  image_tag          = local.image_tag_batch
   execution_role_arn = module.ecs_execution.iam_role_arn
   task_role_arn      = module.worker_task.iam_role_arn
   log_group          = aws_cloudwatch_log_group.batch.name
@@ -360,6 +403,17 @@ module "batch_service" {
     { name = "REDIS_URL", value = "rediss://${module.cache_seoul.primary_endpoint}:6379" },
     { name = "SES_FROM_ADDRESS", value = var.ses_from_address },
     { name = "POLL_INTERVAL_SECONDS", value = "30" },
+    # 낙찰 메일 발송 직전 hidden_at(이미지 반려 여부)을 확인하기 위한 최소 DB 연결.
+    # batch는 원래 RDS를 안 보지만, 반려 상태는 RDS에만 있고 Redis(auctions:open)에는
+    # 반영되지 않으므로(web/store.js, image_moderation Lambda) 여기서 직접 확인한다.
+    { name = "DB_HOST", value = module.rds_seoul.db_address },
+    { name = "DB_PORT", value = "3306" },
+    { name = "DB_NAME", value = "cloud_duck" },
+  ]
+
+  secrets = [
+    { name = "DB_USER", valueFrom = "${module.rds_seoul.secret_arn}:username::" },
+    { name = "DB_PASSWORD", valueFrom = "${module.rds_seoul.secret_arn}:password::" },
   ]
 
   desired_count     = 3

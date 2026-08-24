@@ -25,10 +25,22 @@ RDS 모듈이 `db_name` 을 설정하지 않아서 apply만으로는 데이터�
 그래서 운영 중인 DB의 컬럼을 바꾸거나 추가하는 건 `web/src/schema.sql` 을 고쳐도
 반영되지 않는다. 그럴 때만 여기에 `ALTER` 문을 쓰고 한 번 직접 실행한다.
 
+**DB를 새로 만드는 경우엔 아래 어느 것도 필요 없다** — `web/src/schema.sql` 이 이미
+최종 모습이다. 아래는 전부 "이미 데이터가 들어있는 운영 DB"를 따라오게 만드는 용도다.
+번호 순서대로 실행한다.
+
 | 파일 | 언제 쓰나 |
 |---|---|
-| `001_oauth_identities.sql` | 소셜 로그인 도입 전에 이미 데이터가 들어있던 DB에 `user_identities` 를 붙일 때. **DB를 새로 만드는 경우엔 필요 없다** — `web/src/schema.sql` 에 이미 포함돼 있다 |
+| `001_oauth_identities.sql` | ~~소셜 로그인 도입~~ **더 이상 실행하지 말 것.** 003이 되돌리는 대상이라 지금 실행하면 만들자마자 지우는 꼴이 된다. 이력으로만 남겨둔다 |
+| `002_image_moderation.sql` | 이미지 자동 검수(Rekognition) 결과를 반영할 컬럼을 붙일 때. `auctions.hidden_at`, `auction_images.moderation_status`, `image_moderation_rejections` 테이블 |
+| `003_cognito_auth.sql` | 인증을 Cognito로 넘길 때. `users.password_hash`/`role` 을 지우고 `user_identities` 를 드롭한다 |
 
 ```bash
-mysql -h <rds-endpoint> -u <user> -p cloud_duck < db/migrations/001_oauth_identities.sql
+mysql -h <rds-endpoint> -u <user> -p cloud_duck < db/migrations/002_image_moderation.sql
+mysql -h <rds-endpoint> -u <user> -p cloud_duck < db/migrations/003_cognito_auth.sql
 ```
+
+> ⚠ `003` 은 비밀번호와 권한 정보를 **지운다**. 이 프로젝트는 기존 회원 데이터를
+> 보존할 필요가 없다는 전제로 쓰였다. 관리자는 이후 Cognito의 `admin` 그룹
+> 멤버십으로 판단하며, 최초 admin 계정은 terraform이 apply 시점에 만든다
+> (`terraform/admin-credentials.tf`).

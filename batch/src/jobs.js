@@ -1,13 +1,9 @@
 import { sendWinnerEmail } from './ses.js';
+import { isAuctionHidden } from './db.js';
 
 const OPEN_AUCTIONS_KEY = 'auctions:open'; // ZSET: auctionId -> endsAt(ms)  (web이 경매 생성 시 ZADD)
 const POPULARITY_KEY = 'auction:popularity'; // ZSET: auctionId -> 입찰 횟수 (web이 입찰마다 ZINCRBY)
 const POPULAR_SNAPSHOT_KEY = 'stats:popular:snapshot'; // 관리자 API(GET /admin/stats/popular)가 읽는 캐시
-
-// 소셜 로그인에서 이메일을 못 받은 계정에 붙는 자리표시자 도메인 (web/src/oauth.js).
-// MX 레코드가 없어서 보내면 100% 하드 바운스다 — SES는 바운스율 5%가 넘으면
-// 발송을 정지시키므로, 낙찰자가 이런 계정이면 아예 시도하지 않는다.
-const NO_EMAIL_DOMAIN = '@no-email.cloudduck.cloud';
 
 /**
  * 마감된 경매를 찾아 낙찰자에게 메일을 보낸다.
@@ -33,9 +29,10 @@ export async function notifyEndedAuctions(redis) {
       continue;
     }
 
-    if (leader.email.endsWith(NO_EMAIL_DOMAIN)) {
-      // 낙찰 자체는 유효하다. 알림 수단이 없을 뿐이라 앱 내 알림으로만 남는다.
-      console.log(`[worker] ${auctionId} 낙찰자에게 이메일이 없음 — 메일 건너뜀`);
+    // web/Lambda가 이미지 반려 시 RDS에만 hidden_at을 남기고 이 ZSET은 안 건드리므로,
+    // 여기서 직접 한 번 더 확인한다 — 안 하면 반려된 경매도 그대로 낙찰 메일이 나간다.
+    if (await isAuctionHidden(auctionId)) {
+      console.log(`[worker] ${auctionId} 반려(hidden)된 경매 — 낙찰 메일 건너뜀`);
       continue;
     }
 

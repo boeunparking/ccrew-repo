@@ -96,6 +96,13 @@ resource "aws_iam_role_policy_attachment" "image_moderation_basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# 후속 처리 로직이 RDS(private 서브넷)에 직접 UPDATE를 날리므로 이 Lambda를 VPC 안에서
+# 띄운다 — ENI를 만들고 지울 권한이 기본 실행 롤에는 없어서 별도로 붙여야 한다.
+resource "aws_iam_role_policy_attachment" "image_moderation_vpc_access" {
+  role       = module.image_moderation_execution.iam_role_name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
 data "aws_iam_policy_document" "image_moderation_permissions" {
   statement {
     actions   = ["s3:GetObject", "s3:GetObjectTagging", "s3:PutObjectTagging"]
@@ -122,6 +129,20 @@ data "aws_iam_policy_document" "image_moderation_permissions" {
     ]
     resources = [aws_sqs_queue.image_moderation.arn]
   }
+
+  # 후속 처리: REJECTED 판정을 auctions/auction_images에 반영하려면 DB 자격증명이 필요하다.
+  # 기본 aws/secretsmanager 키로 암호화돼 있어 ecs_execution 롤과 마찬가지로
+  # secretsmanager:GetSecretValue 만 있으면 되고 별도 kms:Decrypt는 필요 없다.
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [module.rds_seoul.secret_arn]
+  }
+
+  # 판매자에게 반려 이메일을 보낸다 (notifications.tf의 worker_permissions와 동일한 리소스 스코프).
+  statement {
+    actions   = ["ses:SendEmail", "ses:SendRawEmail"]
+    resources = [aws_sesv2_email_identity.cloudduck.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "image_moderation_permissions" {
@@ -138,8 +159,19 @@ module "image_moderation" {
   timeout    = 60
 
   environment = {
-    MIN_CONFIDENCE = "75"
+    MIN_CONFIDENCE   = "75"
+    DB_HOST          = module.rds_seoul.db_address
+    DB_PORT          = "3306"
+    DB_NAME          = "cloud_duck"
+    DB_SECRET_ARN    = module.rds_seoul.secret_arn
+    SES_FROM_ADDRESS = var.ses_from_address
   }
+
+  # RDS(private 서브넷)에 직접 붙어야 해서 web/batch가 쓰는 서브넷·보안그룹을 그대로 재사용한다.
+  # db_sg의 인바운드 허용 대상이 ecs_sg_id 하나로 고정돼 있어(modules/rds/main.tf), 새 보안그룹을
+  # 따로 만드는 대신 여기 태우는 쪽이 db_sg 규칙을 건드리지 않고 접근 권한을 얻는 가장 단순한 방법이다.
+  subnet_ids         = [module.seoul.subnet_ids["pri-sn3"], module.seoul.subnet_ids["pri-sn4"]]
+  security_group_ids = [module.seoul.ecs_sg_id]
 }
 
 resource "aws_lambda_event_source_mapping" "image_moderation_sqs" {
