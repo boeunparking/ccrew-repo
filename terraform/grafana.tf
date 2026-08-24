@@ -56,7 +56,7 @@ resource "aws_iam_role_policy_attachment" "grafana_cloudwatch" {
 resource "aws_grafana_workspace" "this" {
   count = var.enable_grafana ? 1 : 0
 
-  name        = "${var.project}-grafana"
+  name        = "${var.project}-grafana-0"
   description = "cloud-duck 서울/도쿄 CloudWatch 지표 통합 대시보드"
 
   account_access_type      = "CURRENT_ACCOUNT"
