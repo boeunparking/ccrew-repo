@@ -71,6 +71,27 @@ resource "aws_cognito_user_pool" "this" {
   admin_create_user_config {
     allow_admin_create_user_only = false
   }
+
+  # ⚠ 위 schema 블록은 이제 "최초 생성 시에만" 의미가 있다. 손대지 말 것.
+  #
+  # Cognito 는 스키마 항목을 추가만 할 수 있고 수정/삭제는 영구히 불가능하다.
+  # nickname 은 Cognito 표준 속성이라 풀에 이미 존재하는데, provider 가 이걸
+  # "config 에 있는데 풀에 없다"고 오판해 AddCustomAttributes 를 호출했고
+  # (2026-08-24 12:59 실제 발생), 커스텀 속성은 무조건 custom: 접두사가 붙으므로
+  # 풀에 표준 nickname 과 custom:nickname 이 동시에 생겼다.
+  #
+  # 그 뒤로 config(2개)와 실제 스키마(표준 + custom:nickname)가 영구히 어긋나서
+  # 매 apply 마다 UpdateUserPool 을 시도하다 "cannot modify or remove schema items"
+  # 로 실패했다 — 되돌릴 방법이 없으니 apply 가 통째로 막히는 상태였다.
+  #
+  # 실제 스키마는 이미 원하는 형태(email 필수 + nickname 존재)이고 앱이 쓰는 것도
+  # 표준 nickname(구글 IdP attribute_mapping)이라 기능상 문제가 없다. custom:nickname
+  # 은 아무도 참조하지 않는 잔재로 남는다 — 지우려면 풀을 재생성하는 수밖에 없다.
+  #
+  # 커스텀 속성이 정말 필요해지면 여기에 추가하지 말고 풀을 새로 만들 것.
+  lifecycle {
+    ignore_changes = [schema]
+  }
 }
 
 # Google 리다이렉트(예: /oauth2/authorize?identity_provider=Google...) 처리에 필요한
