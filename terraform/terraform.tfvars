@@ -39,5 +39,5 @@ alarm_email              = "ccrewduck@gmail.com"
 google_client_id = "759497431576-f28o4ll26bpc9bs3t2t208rfq3sb4q3g.apps.googleusercontent.com"
 #
 # 슬랙 id
-slack_team_id       = "T0BKG31JUT0"
-slack_channel_id    = "C0BKSFNR14K"
+slack_team_id    = "T0BKG31JUT0"
+slack_channel_id = "C0BKSFNR14K"

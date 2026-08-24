@@ -31,13 +31,10 @@ resource "aws_s3_bucket" "frontend" {
   force_destroy = true
 
   tags = { Name = "${var.project}-frontend" }
-<<<<<<< HEAD
-  
+
   lifecycle {
     prevent_destroy = false
   }
-=======
->>>>>>> f50b7772a21542bc1469de1f2e8ce957f1bf83ba
 }
 
 resource "aws_s3_bucket_versioning" "frontend" {
