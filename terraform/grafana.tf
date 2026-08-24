@@ -71,6 +71,54 @@ resource "aws_grafana_workspace" "this" {
   tags = { Name = "${var.project}-grafana" }
 }
 
+########################################
+# 워크스페이스 접근 권한 — IAM Identity Center 그룹 배정
+#
+# 워크스페이스를 만드는 것과 "누가 들어갈 수 있는가"는 별개다. 배정이 없으면
+# 워크스페이스는 ACTIVE 인데 아무도 로그인할 수 없다(빈 permissions 상태).
+#
+# 그룹 ID 를 직접 적지 않고 이름으로 조회하는 이유: ID 는 Identity Center 를
+# 다시 만들면 바뀌는 값이라 적어두면 조용히 썩는다. 이름으로 찾으면 그룹이
+# 없어졌을 때 apply 가 명확한 에러로 멈춘다.
+#
+# ⚠ 비용: Grafana 는 "배정된 사용자 수 × 월 정액"이다(Admin/Editor 약 $9, Viewer 약 $5).
+# 이 그룹에 사람을 넣는 만큼 매달 과금되므로, 그룹 멤버는 필요한 인원만 유지할 것.
+########################################
+
+variable "grafana_admin_group" {
+  description = "Grafana Admin 권한을 줄 IAM Identity Center 그룹 이름"
+  type        = string
+  default     = "admin"
+}
+
+data "aws_ssoadmin_instances" "this" {
+  count = var.enable_grafana ? 1 : 0
+}
+
+data "aws_identitystore_group" "grafana_admin" {
+  count = var.enable_grafana ? 1 : 0
+
+  identity_store_id = tolist(data.aws_ssoadmin_instances.this[0].identity_store_ids)[0]
+
+  alternate_identifier {
+    unique_attribute {
+      attribute_path  = "DisplayName"
+      attribute_value = var.grafana_admin_group
+    }
+  }
+}
+
+# role = ADMIN: 대시보드 생성/편집 + 데이터소스 설정까지 가능.
+# 조회만 시킬 사람은 별도 그룹을 만들어 role = VIEWER 로 따로 배정하는 게 맞다
+# (Viewer 가 월 정액도 더 싸다).
+resource "aws_grafana_role_association" "admin_group" {
+  count = var.enable_grafana ? 1 : 0
+
+  workspace_id = aws_grafana_workspace.this[0].id
+  role         = "ADMIN"
+  group_ids    = [data.aws_identitystore_group.grafana_admin[0].group_id]
+}
+
 output "grafana_workspace_endpoint" {
   description = "Grafana 접속 주소 (enable_grafana=false면 null)"
   value       = try(aws_grafana_workspace.this[0].endpoint, null)
