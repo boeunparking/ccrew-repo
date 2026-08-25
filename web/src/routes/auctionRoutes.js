@@ -57,6 +57,9 @@ router.get("/:id", async (req, res) => {
     images: a.images.map(toImagePath),
     startPrice: a.startPrice,
     currentPrice: a.currentPrice,
+    // 절대 시각도 같이 준다. 카운트다운만 보면 그 값이 맞는지 확인할 방법이 없고,
+    // 실제로 9시간 밀린 채로 한참 돌았다. 화면은 이 값을 사용자의 시간대로 보여준다.
+    endsAt: new Date(a.endsAt).toISOString(),
     secondsLeft: secondsLeft(a),
     ended: isEnded(a),
     bidderCount,
@@ -105,8 +108,27 @@ router.post("/", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "시작가는 0보다 큰 숫자여야 합니다" });
   }
 
+  // 마감시간은 반드시 시간대가 붙은 절대 시각이어야 한다.
+  //
+  // "2026-08-26T20:00" 처럼 시간대가 없는 문자열을 new Date() 에 넣으면 그 시각을
+  // "실행 중인 프로세스의 시간대"로 해석한다. 이 컨테이너는 UTC 라서, 한국에서
+  // 고른 20시가 UTC 20시(= KST 다음날 05시)로 저장됐다 — 마감까지 남은 시간이
+  // 9시간씩 더 뜨던 원인이 이것이다.
+  //
+  // 사용자의 시간대를 아는 건 브라우저뿐이므로 변환은 프론트가 하고(AuctionCreate.jsx),
+  // 서버는 시간대가 빠진 값을 조용히 추측하는 대신 거절한다. 추측해서 9시간 어긋난
+  // 경매가 만들어지는 것보다, 등록이 실패하고 이유가 보이는 쪽이 낫다.
+  if (typeof endTime !== "string" || !/(?:Z|[+-]\d{2}:?\d{2})$/.test(endTime.trim())) {
+    return res.status(400).json({
+      error: "마감시간에 시간대 정보가 없습니다 (예: 2026-08-26T11:00:00.000Z)",
+    });
+  }
+
   const endsAt = new Date(endTime);
-  if (Number.isNaN(endsAt.getTime()) || endsAt.getTime() <= Date.now()) {
+  if (Number.isNaN(endsAt.getTime())) {
+    return res.status(400).json({ error: "마감시간 형식이 올바르지 않습니다" });
+  }
+  if (endsAt.getTime() <= Date.now()) {
     return res
       .status(400)
       .json({ error: "마감시간은 현재보다 이후여야 합니다" });

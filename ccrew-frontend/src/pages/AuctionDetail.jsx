@@ -175,6 +175,14 @@ export default function AuctionDetail() {
             마감까지 {formatTime(secondsLeft)}
           </div>
 
+          {/* 등록할 때 정한 마감 시각. 카운트다운이 맞는지 눈으로 확인할 수 있어야 한다.
+              서버는 UTC로 주고, 여기서 보는 사람의 시간대로 표시된다. */}
+          {auction.endsAt && (
+            <div style={{ fontSize: 12, color: "#8C8C8C", margin: "-8px 0 14px" }}>
+              마감 {new Date(auction.endsAt).toLocaleString("ko-KR")}
+            </div>
+          )}
+
           <div className="price-box">
             <div className="label">현재 최고가</div>
             <div className={`big ${flash ? "flash" : ""}`}>

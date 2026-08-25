@@ -19,6 +19,10 @@ const pool = mysql.createPool({
   waitForConnections: true,
   // web과 달리 요청당 커넥션이 아니라 30초 틱마다 짧게 몇 건만 조회하므로 적게 잡는다.
   connectionLimit: 3,
+
+  // web/src/db.js 와 같은 이유로 UTC 로 못박는다. 워커와 web 이 서로 다른 시간대로
+  // DATETIME 을 해석하면 "마감됐다"는 판단이 둘 사이에서 어긋난다.
+  timezone: 'Z',
 });
 
 export default pool;

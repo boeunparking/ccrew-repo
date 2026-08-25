@@ -190,6 +190,17 @@ export async function restoreAuction(id) {
   return result.affectedRows > 0;
 }
 
+/**
+ * DATETIME 컬럼에 넣을 UTC 문자열('YYYY-MM-DD HH:MM:SS')로 바꾼다.
+ *
+ * 예전엔 toISOString() 결과를 그대로 넣었는데, 그건 '2026-08-26T11:00:00.000Z' 라
+ * MySQL 이 끝의 Z 와 밀리초를 이해하지 못한다 — 경고와 함께 잘려 들어가고,
+ * STRICT 모드에서는 INSERT 자체가 실패한다.
+ */
+function toMysqlUtc(value) {
+  return new Date(value).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 export async function createAuction(auction) {
   await pool.query(
     `INSERT INTO auctions
@@ -197,7 +208,8 @@ export async function createAuction(auction) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       auction.id, auction.name, auction.brand, auction.category, auction.description,
-      auction.startPrice, auction.currentPrice, auction.endsAt, auction.sellerId, auction.tag,
+      auction.startPrice, auction.currentPrice, toMysqlUtc(auction.endsAt),
+      auction.sellerId, auction.tag,
     ],
   );
 
