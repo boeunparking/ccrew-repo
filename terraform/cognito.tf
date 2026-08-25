@@ -151,13 +151,17 @@ locals {
   # 프론트가 커스텀 로그인 폼에서 이메일/비밀번호는 SRP로 직접 처리하고, 구글
   # 버튼만 이 목록의 콜백으로 돌아온다. 로컬 개발 포트(3000/5173)는 미리 등록해뒀다 —
   # 프론트 실제 배포 주소가 늘어나면 이 목록에 추가하고 apply.
+  # apex(cloudduck.cloud)는 여기 넣지 않는다. CloudFront 가 HTML 을 내려주기 전에
+  # 301 로 www 로 보내기 때문에, 브라우저 주소창이 apex 인 상태로 앱이 뜨는 경우가
+  # 없다 — 프론트는 location.origin 으로 redirect_uri 를 만들므로(config.js) 실제로
+  # 오는 값은 항상 www 다. apex 를 등록해두면 쓰이지 않는 항목만 늘어난다.
   cognito_callback_urls = [
-    "https://${var.domain_name}/oauth/callback",
+    "https://${local.frontend_host}/oauth/callback",
     "http://localhost:3000/oauth/callback",
     "http://localhost:5173/oauth/callback",
   ]
   cognito_logout_urls = [
-    "https://${var.domain_name}/",
+    "https://${local.frontend_host}/",
     "http://localhost:3000/",
     "http://localhost:5173/",
   ]

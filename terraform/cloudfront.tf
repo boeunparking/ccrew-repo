@@ -7,6 +7,22 @@ provider "aws" {
   region = "us-east-1"
 }
 
+locals {
+  # 프론트의 정식 주소. 사용자가 실제로 보게 되는 주소는 항상 이것 하나다 —
+  # apex(cloudduck.cloud)로 들어와도 CloudFront 가 301 로 여기로 보낸다.
+  #
+  # apex 는 "또 하나의 주소"가 아니라 리다이렉트 입구일 뿐이라, 아래 세 곳
+  # (인증서 SAN · 배포 aliases · A 레코드)에만 등장한다. 셋 다 apex 요청이
+  # CloudFront 까지 도달하게 하는 데 기술적으로 필요해서 있는 것이고,
+  # Cognito 콜백이나 CORS 허용 목록에는 넣지 않는다 — 브라우저가 apex 에서
+  # 앱을 띄우지 못하므로 그 출처로 요청이 나갈 일이 없다.
+  #
+  # var.domain_name(=cloudduck.cloud)은 계속 남지만 그건 웹 주소가 아니라
+  # 호스티드 존 이름이다. 존 이름은 바꿀 수 없고, SES 발신 도메인 인증도
+  # 루트 도메인에 걸린다(notifications.tf).
+  frontend_host = "www.${var.domain_name}"
+}
+
 ########################################
 # 프론트엔드 정적 파일 전용 S3 버킷
 ########################################
@@ -115,10 +131,16 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
 # ACM 인증서 (us-east-1, CloudFront 전용)
 ########################################
 resource "aws_acm_certificate" "cloudfront" {
-  provider          = aws.us_east_1
-  domain_name       = "cloudduck.cloud"
-  validation_method = "DNS"
+  provider = aws.us_east_1
 
+  # apex도 인증서에 있어야 한다. www만 넣으면 apex로 들어온 요청이 TLS 핸드셰이크
+  # 단계에서 끊겨서, 브라우저는 301을 받아보지도 못하고 인증서 경고를 띄운다.
+  domain_name               = var.domain_name
+  subject_alternative_names = [local.frontend_host]
+  validation_method         = "DNS"
+
+  # SAN을 바꾸면 인증서는 교체(replace)된다. 먼저 새 인증서를 만들어 검증까지 끝낸 뒤
+  # 배포에 갈아끼우고 옛 것을 지우므로 서비스가 끊기지 않는다.
   lifecycle {
     create_before_destroy = true
   }
@@ -157,12 +179,32 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
 }
 
 ########################################
+# apex -> www 301 리다이렉트 (viewer-request)
+#
+# 요청이 오리진까지 가기 전에 Function 이 곧바로 301 을 돌려준다.
+# S3 를 건드리지 않으므로 비용도 지연도 거의 없다.
+########################################
+resource "aws_cloudfront_function" "redirect_to_www" {
+  name    = "${var.project}-redirect-to-www"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  comment = "apex(${var.domain_name}) 요청을 ${local.frontend_host} 로 301 리다이렉트"
+
+  code = templatefile("${path.module}/functions/redirect-to-www.js.tftpl", {
+    frontend_host = local.frontend_host
+  })
+}
+
+########################################
 # CloudFront 배포
 ########################################
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   default_root_object = "index.html"
-  aliases             = ["cloudduck.cloud"]
+
+  # apex 가 여기 있어야 한다 — alias 에서 빼면 apex 요청이 CloudFront 에 도달조차
+  # 못 해서(SSL 오류) 위 리다이렉트 Function 이 실행될 기회가 없다.
+  aliases = [var.domain_name, local.frontend_host]
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -181,6 +223,11 @@ resource "aws_cloudfront_distribution" "frontend" {
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "s3-frontend"
     viewer_protocol_policy = "redirect-to-https"
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.redirect_to_www.arn
+    }
 
     forwarded_values {
       query_string = false
@@ -210,6 +257,13 @@ resource "aws_cloudfront_distribution" "frontend" {
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "s3-uploads"
     viewer_protocol_policy = "redirect-to-https"
+
+    # 이미지도 같은 도메인에서 나가므로 여기에도 붙인다 — 안 붙이면 apex 로 걸린
+    # 이미지 URL 만 리다이렉트 없이 200 으로 응답해서 주소가 두 벌로 남는다.
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.redirect_to_www.arn
+    }
 
     # 이미지 키에 타임스탬프와 uuid 가 들어가서 같은 키가 다른 내용으로 바뀌지 않는다.
     # 그래서 길게 캐시해도 안전하다.
@@ -298,11 +352,35 @@ resource "aws_s3_bucket_policy" "uploads" {
 }
 
 ########################################
-# Route53 — cloudduck.cloud를 CloudFront로 연결
+# Route53 — apex와 www를 둘 다 CloudFront로 연결
+#
+# 사용자가 보게 되는 주소는 www 하나지만, apex도 같은 배포를 가리켜야 한다.
+# 그래야 apex 요청이 CloudFront까지 도달해서 redirect_to_www가 301을 돌려준다.
+# apex 레코드를 지우면 "리다이렉트"가 아니라 "연결 실패"가 된다.
 ########################################
-resource "aws_route53_record" "frontend" {
+
+# 이름만 바꾼 것이지 새 레코드가 아니다. moved가 없으면 terraform이
+# "frontend 삭제 + frontend_apex 생성"으로 계획해서, 그 사이 apex가 잠깐 조회 실패한다.
+moved {
+  from = aws_route53_record.frontend
+  to   = aws_route53_record.frontend_apex
+}
+
+resource "aws_route53_record" "frontend_apex" {
   zone_id = data.aws_route53_zone.cloudduck.zone_id
-  name    = "cloudduck.cloud"
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.frontend.domain_name
+    zone_id                = aws_cloudfront_distribution.frontend.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "frontend_www" {
+  zone_id = data.aws_route53_zone.cloudduck.zone_id
+  name    = local.frontend_host
   type    = "A"
 
   alias {

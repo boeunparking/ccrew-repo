@@ -42,12 +42,18 @@ export function isAllowedHost(hostname) {
 
 /**
  * 브라우저에서 이 API를 호출할 수 있는 프론트 출처.
- * 스킴까지 포함한 완전한 origin으로 적어야 한다. (예: https://cloudduck.cloud)
+ * 스킴까지 포함한 완전한 origin으로 적어야 한다. (예: https://www.cloudduck.cloud)
  */
+// 사용자가 보게 되는 프론트 주소는 www 하나다. apex(cloudduck.cloud)로 들어와도
+// CloudFront 가 HTML 을 내려주기 전에 301 로 www 로 보내므로, 브라우저 출처가
+// apex 인 채로 이 API 를 부르는 상황이 생기지 않는다 — 목록에 둘 이유가 없다.
+//
+// 예외는 전환 시점에 apex 로 앱을 이미 띄워둔 탭뿐이다. 그 탭은 새로고침하면
+// www 로 넘어간다. 그 잠깐까지 받아주고 싶으면 CORS_ORIGINS 환경변수로 apex 를
+// 임시로 추가할 수 있다(코드 수정 없이 ECS 태스크 정의만 바꾸면 된다).
 export const ALLOWED_ORIGINS = toList(process.env.CORS_ORIGINS).length
   ? toList(process.env.CORS_ORIGINS)
   : [
-      'https://cloudduck.cloud',
       'https://www.cloudduck.cloud',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
@@ -87,5 +93,5 @@ export const PUBLIC_API_BASE_URL = (
 export const FRONTEND_BASE_URL = (
   process.env.FRONTEND_BASE_URL ??
   ALLOWED_ORIGINS[0] ??
-  'https://cloudduck.cloud'
+  'https://www.cloudduck.cloud'
 ).replace(/\/+$/, '');

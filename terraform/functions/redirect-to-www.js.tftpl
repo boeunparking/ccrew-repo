@@ -1,0 +1,57 @@
+// CloudFront Function (viewer-request) — apex 를 www 로 301 리다이렉트한다.
+//
+// terraform 이 templatefile() 로 ${frontend_host} 를 채워 넣는다(cloudfront.tf).
+// 이 파일을 직접 편집할 때 주의: CloudFront Functions 는 ES5.1 수준의 제한된
+// 런타임이다. const/let, 화살표 함수, 템플릿 리터럴, Object.entries 전부 못 쓴다.
+//
+// 왜 별도 배포가 아니라 Function 인가:
+//   apex 와 www 를 같은 배포의 alias 로 두고 여기서 Host 헤더만 보고 갈라내면
+//   배포·인증서·S3 정책이 하나로 유지된다. 리다이렉트 전용 배포를 따로 만들면
+//   그 셋이 전부 두 벌이 되고, 한쪽만 고쳐서 어긋나기 쉽다.
+//
+// 이 Function 이 있기 때문에 브라우저는 apex 에서 앱을 띄우지 못한다 — HTML 이
+// 내려가기 전에 301 이 나간다. 그래서 Cognito 콜백 URL 이나 CORS 허용 목록에는
+// apex 를 넣지 않는다(그쪽 출처로 요청이 나갈 일이 없다).
+
+function handler(event) {
+  var request = event.request;
+  var host = request.headers.host && request.headers.host.value;
+
+  // www 로 이미 들어온 요청은 그대로 통과. Host 를 못 읽는 경우도 건드리지 않는다.
+  if (!host || host === '${frontend_host}') {
+    return request;
+  }
+
+  // 쿼리스트링을 살려서 넘긴다. 안 그러면 /auctions?cat=scale 같은 링크가
+  // 리다이렉트를 거치면서 필터를 잃는다.
+  var qs = '';
+  var keys = Object.keys(request.querystring);
+  if (keys.length > 0) {
+    var parts = [];
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var entry = request.querystring[key];
+
+      // 같은 키가 여러 번 온 경우(?a=1&a=2)를 전부 살린다.
+      if (entry.multiValue) {
+        for (var j = 0; j < entry.multiValue.length; j++) {
+          parts.push(key + '=' + entry.multiValue[j].value);
+        }
+      } else if (entry.value === '') {
+        // 값 없는 플래그(?debug)는 '=' 를 붙이지 않는다
+        parts.push(key);
+      } else {
+        parts.push(key + '=' + entry.value);
+      }
+    }
+    qs = '?' + parts.join('&');
+  }
+
+  return {
+    statusCode: 301,
+    statusDescription: 'Moved Permanently',
+    headers: {
+      location: { value: 'https://${frontend_host}' + request.uri + qs },
+    },
+  };
+}

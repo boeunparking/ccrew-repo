@@ -401,7 +401,7 @@ jobs:
           echo "무효화 $id 생성 — 완료까지 대기"
           aws cloudfront wait invalidation-completed \
             --distribution-id "${{ steps.target.outputs.dist }}" --id "$id"
-          echo "배포 완료: https://cloudduck.cloud"
+          echo "배포 완료: https://www.cloudduck.cloud"
 
   # ──────────────────────────────────────────────────────────────
   # plan 전용 — 수동 실행에서 mode=plan 을 고른 경우.

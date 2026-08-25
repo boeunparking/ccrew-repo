@@ -15,10 +15,10 @@ data "aws_route53_zone" "cloudduck" {
 }
 
 # API 서브도메인 -> Global Accelerator 로 alias 연결
-# 예: api.cloudduck.cloud
+# 예: api.cloudduck.cloud (프론트 도메인과 달리 www를 붙이지 않는다)
 resource "aws_route53_record" "api" {
   zone_id = data.aws_route53_zone.cloudduck.zone_id
-  name    = "api.cloudduck.cloud"
+  name    = "api.${var.domain_name}"
   type    = "A"
 
   alias {
