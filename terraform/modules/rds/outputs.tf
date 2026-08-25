@@ -10,6 +10,18 @@ output "primary_endpoint" {
   value = try(aws_db_instance.primary[0].endpoint, null)
 }
 
+# CloudWatch 의 AWS/RDS 지표는 DBInstanceIdentifier 단위라 replica 도 자기 식별자가 필요하다.
+# 같은 리전 replica 와 크로스 리전 replica 는 동시에 존재하지 않으므로(create_replica /
+# create_cross_region_replica 가 배타적) 하나의 출력으로 합쳐서 내보낸다.
+output "replica_identifier" {
+  description = "read replica 식별자 (없으면 null). Grafana/CloudWatch dimension 용"
+  value = try(
+    aws_db_instance.replica[0].identifier,
+    aws_db_instance.cross_region_replica[0].identifier,
+    null
+  )
+}
+
 output "replica_endpoint" {
   value = try(
     aws_db_instance.replica[0].endpoint,

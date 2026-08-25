@@ -122,6 +122,30 @@ jobs:
           fi
           echo "백업 완료: $STAMP"
 
+      # deploy.yml 의 "Grafana 인증 토큰 선행 apply" 와 대칭되는 문제.
+      # provider "grafana" 는 aws_grafana_workspace_service_account_token 의 값으로
+      # 인증하는데, 전체 destroy 를 한 번에 돌리면 그 토큰도 같은 작업에서 삭제
+      # 대상에 올라 plan 단계에 참조가 끊겨 아래 에러가 난다:
+      #
+      #     Error: the Grafana client is required for this resource.
+      #            Set the auth and url provider attributes
+      #
+      # 토큰이 아직 멀쩡히 남아있는 상태에서 grafana 리소스(대시보드/데이터소스/
+      # 폴더)만 먼저 targeted destroy 로 지운다. 토큰·서비스계정·워크스페이스는
+      # 아래 전체 destroy 가 마저 정리한다.
+      # enable_grafana=false 거나 이미 지워진 상태면 대상이 없어 "변경 없음"으로
+      # 통과한다.
+      - name: Grafana 리소스 선행 destroy
+        run: |
+          terraform destroy -auto-approve -input=false \
+            -var "image_tag_web=unused" \
+            -var "image_tag_batch=unused" \
+            -target=grafana_dashboard.overview \
+            -target=grafana_dashboard.seoul \
+            -target=grafana_dashboard.dr \
+            -target=grafana_data_source.cloudwatch \
+            -target=grafana_folder.cloud_duck
+
       # 여기서도 -var 로 태그를 넘겨야 한다. destroy 도 plan 단계에서 data 소스를
       # 읽는데, 태그가 없으면 data.aws_ecr_image 가 켜져서(count=1) ECR 최신
       # 이미지를 찾으려 든다. 이미 비었거나 없으면 destroy 가 시작도 못 한다.

@@ -23,7 +23,18 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
-
+    # Grafana 대시보드/데이터소스는 AWS API 로 만들 수 없다 — 워크스페이스라는 그릇까지가
+    # AWS 담당이고, 그 안의 내용물은 Grafana 자체 HTTP API 영역이다. 그래서 provider 를 하나 더 쓴다.
+    grafana = {
+      source  = "grafana/grafana"
+      version = "~> 3.18"
+    }
+    # 위 Grafana provider 인증에 쓰는 서비스 계정 토큰은 최대 30일짜리다.
+    # 만료되면 대시보드 관리가 통째로 막히므로 time_rotating 으로 만료 전에 자동 교체한다.
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.12"
+    }
   }
 }
 
