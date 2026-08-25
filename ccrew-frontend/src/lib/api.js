@@ -21,9 +21,12 @@ export const auth = {
  *
  * status가 없는 에러는 요청을 보내기도 전에 막힌 경우(토큰 없음, 네트워크 실패)다.
  */
-function apiError(message, status) {
+function apiError(message, status, data) {
   const err = new Error(message);
   if (status) err.status = status;
+  // 서버가 error 말고 같이 실어 보낸 값들(입찰 거절 시의 currentPrice/minimum 등).
+  // 이걸 버리면 화면이 낡은 현재가로 계속 재시도하게 된다.
+  if (data) err.data = data;
   return err;
 }
 
@@ -65,7 +68,7 @@ async function request(path, { method = 'GET', body, auth: needAuth = false } = 
     throw apiError(data.error ?? '세션이 만료되었습니다. 다시 로그인해 주세요', 401);
   }
 
-  if (!res.ok) throw apiError(data.error ?? '요청을 처리하지 못했습니다', res.status);
+  if (!res.ok) throw apiError(data.error ?? '요청을 처리하지 못했습니다', res.status, data);
   return data;
 }
 

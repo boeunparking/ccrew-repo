@@ -170,8 +170,6 @@ resource "aws_cloudfront_distribution" "frontend" {
     origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
   }
 
-  # 경매 이미지가 들어있는 source 버킷. 프론트 버킷과는 별개다.
-  # OAC 는 origin 단위가 아니라 배포 단위로 재사용 가능해서 frontend 것을 그대로 쓴다.
   origin {
     domain_name              = module.s3.source_bucket_regional_domain_name
     origin_id                = "s3-uploads"

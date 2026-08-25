@@ -3,8 +3,7 @@ import crypto from 'crypto';
 import {
   getAuctionById,
   listAuctions,
-  createBid,
-  updateAuctionCurrentPrice,
+  recordBid,
   getBidsForAuction,
   secondsLeft,
   isEnded,
@@ -12,7 +11,7 @@ import {
 } from '../store.js';
 import { requireAuth } from '../authMiddleware.js';
 import { broadcast } from '../realtime.js';
-import redis, { attemptBid } from '../valkey.js';
+import redis, { attemptBid, rollbackBid } from '../valkey.js';
 
 const router = Router();
 
@@ -44,11 +43,22 @@ router.post('/auctions/:id/bids', requireAuth, async (req, res) => {
   }
 
   try {
-    const { accepted, currentPrice } = await attemptBid(auctionId, price);
+    // 세 번째 인자는 Valkey에 가격 키가 없을 때 심을 값이다. Valkey는 캐시라
+    // 키가 사라질 수 있는데, 그때 RDS의 현재가로 스스로 복구하지 않으면
+    // 그 경매는 영영 입찰이 안 된다.
+    const { accepted, currentPrice, previousPrice } = await attemptBid(
+      auctionId,
+      price,
+      auction.currentPrice,
+    );
 
     if (!accepted) {
+      // currentPrice를 같이 내려준다 — 화면이 들고 있던 현재가가 낡았을 때
+      // (RDS와 Valkey가 어긋났거나, 방금 남이 더 높게 불렀거나) 클라이언트가
+      // 이 값으로 다시 맞출 수 있어야 사용자가 갇히지 않는다.
       return res.status(400).json({
         error: `현재가보다 ${MIN_INCREMENT.toLocaleString()}원 이상 높게 입찰해 주세요`,
+        currentPrice,
         minimum: currentPrice + MIN_INCREMENT,
       });
     }
@@ -63,8 +73,24 @@ router.post('/auctions/:id/bids', requireAuth, async (req, res) => {
     };
 
     // Valkey가 승인한 값(currentPrice)을 RDS에도 반영해 둘을 동기화한다.
-    await createBid(bid);
-    await updateAuctionCurrentPrice(auctionId, currentPrice);
+    //
+    // 여기서 실패하면 Valkey만 가격이 올라간 채로 남는다. 그 상태가 굳으면
+    // 화면(RDS 기준)이 계산한 최소가가 판정(Valkey) 기준에 늘 못 미쳐서
+    // 그 경매는 아무도 입찰할 수 없게 된다 — 그래서 반드시 되돌린다.
+    try {
+      await recordBid(bid);
+    } catch (dbError) {
+      const restored = await rollbackBid(auctionId, currentPrice, previousPrice)
+        .catch((e) => {
+          console.error('[bid] Valkey 원복 실패 — 현재가 불일치 상태로 남음:', auctionId, e.message);
+          return false;
+        });
+      console.error(
+        `[bid] RDS 기록 실패 (auction=${auctionId}, price=${currentPrice}, 원복=${restored}):`,
+        dbError.message,
+      );
+      return res.status(500).json({ error: '입찰을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요' });
+    }
 
     // 낙찰 알림/인기 상품 통계 워커(batch)가 쓸 상태 갱신.
     // 여기서 실패해도 입찰 자체는 이미 성공했으니 응답을 막지 않는다.

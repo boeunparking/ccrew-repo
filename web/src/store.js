@@ -259,10 +259,6 @@ async function applyPendingModerationRejections(auctionId, imageKeys) {
   }
 }
 
-export async function updateAuctionCurrentPrice(auctionId, price) {
-  await pool.query('UPDATE auctions SET current_price = ? WHERE id = ?', [price, auctionId]);
-}
-
 // ========================================
 // bids
 // ========================================
@@ -283,11 +279,35 @@ export async function getBidsForAuction(auctionId) {
   }));
 }
 
-export async function createBid(bid) {
-  await pool.query(
-    'INSERT INTO bids (id, auction_id, user_id, price) VALUES (?, ?, ?, ?)',
-    [bid.id, bid.auctionId, bid.userId, bid.price],
-  );
+/**
+ * 입찰 기록 + 현재가 갱신을 한 트랜잭션으로 처리한다 (bidRoutes.js).
+ *
+ * 둘을 따로 실행하면 "입찰은 남았는데 current_price는 그대로"인 반쪽 상태가 생기고,
+ * 그러면 화면이 계산하는 최소 입찰가가 Valkey 기준보다 낮아져서 그 경매는 아무도
+ * 입찰할 수 없게 된다. 여기서 전부 성공하거나 전부 실패하게 만들면, 호출부는
+ * 실패 시 Valkey만 원복하면 두 저장소가 항상 같은 값으로 맞는다.
+ */
+export async function recordBid(bid) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    await conn.query(
+      'INSERT INTO bids (id, auction_id, user_id, price) VALUES (?, ?, ?, ?)',
+      [bid.id, bid.auctionId, bid.userId, bid.price],
+    );
+    await conn.query(
+      'UPDATE auctions SET current_price = ? WHERE id = ?',
+      [bid.price, bid.auctionId],
+    );
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 }
 
 /**

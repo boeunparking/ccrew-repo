@@ -86,7 +86,17 @@ export default function AuctionDetail() {
       setCurrentPrice(amount);
       runFlash();
     } catch (e) {
-      setError(e.message);
+      // 거절당했다면 서버가 실제 기준 현재가를 같이 보내준다. 그걸로 화면을 맞춰야
+      // 다음 +1,000 버튼이 진짜 최소가를 계산한다 — 안 그러면 낡은 값으로 계속
+      // 재시도하면서 같은 400만 반복하게 된다.
+      if (Number.isFinite(e.data?.currentPrice)) {
+        setCurrentPrice(e.data.currentPrice);
+      }
+      setError(
+        Number.isFinite(e.data?.minimum)
+          ? `${e.message} (최소 ${e.data.minimum.toLocaleString()}원)`
+          : e.message,
+      );
     }
   };
 

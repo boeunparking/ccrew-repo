@@ -2,11 +2,11 @@ import { Router } from 'express';
 import { S3Client, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 import {
   listAuctions, countAllBids, claims, securityLogs, suspiciousBids, secondsLeft, isEnded,
-  deleteAuction, listHiddenAuctions, restoreAuction,
+  deleteAuction, listHiddenAuctions, restoreAuction, getAuctionById, getBidsForAuction,
 } from '../store.js';
 import { requireAuth, requireAdmin } from '../authMiddleware.js';
 import { connectionCount } from '../realtime.js';
-import redis from '../valkey.js';
+import redis, { getBidPrice, resyncAuctionPrice } from '../valkey.js';
 
 const UPLOAD_BUCKET = process.env.UPLOAD_BUCKET;
 const s3 = new S3Client({ region: process.env.AWS_REGION || 'ap-northeast-2' });
@@ -40,6 +40,63 @@ router.get('/auctions', async (_req, res) => {
     }));
 
   res.json({ items });
+});
+
+/**
+ * 특정 경매의 "입찰이 안 된다" 증상 진단.
+ *
+ * 입찰 판정은 Valkey(auction:{id}:price)가, 화면의 현재가 표시는 RDS가 담당한다.
+ * 이 둘이 어긋나면 화면이 계산한 최소 입찰가가 판정 기준에 늘 못 미쳐서
+ * 그 경매만 400(현재가보다 1,000원 이상...)이 반복된다 — 여기서 바로 확인된다.
+ */
+router.get('/auctions/:id/price', async (req, res) => {
+  const { id } = req.params;
+
+  const auction = await getAuctionById(id, { includeHidden: true });
+  if (!auction) return res.status(404).json({ error: '존재하지 않는 경매입니다' });
+
+  const [valkeyPrice, history] = await Promise.all([
+    getBidPrice(id).catch(() => null),
+    getBidsForAuction(id),
+  ]);
+  const highestBid = history.length ? Math.max(...history.map((b) => b.price)) : null;
+
+  res.json({
+    id,
+    name: auction.name,
+    rdsCurrentPrice: auction.currentPrice,
+    valkeyPrice, // null이면 키가 사라진 것 — 이제 첫 입찰 때 RDS 값으로 자동 복구된다
+    highestBid,
+    // 셋이 같아야 정상. valkeyPrice가 더 크면 입찰이 막힌 상태다.
+    inSync: valkeyPrice !== null && valkeyPrice === auction.currentPrice,
+    hidden: Boolean(auction.hiddenAt),
+    ended: isEnded(auction),
+  });
+});
+
+/**
+ * 어긋난 Valkey 현재가를 RDS의 기록(실제 남아 있는 최고 입찰가)에 맞춰 되돌린다.
+ *
+ * 가격을 낮추는 방향이라 진행 중인 입찰을 덮어쓸 수 있으므로 자동으로 돌지 않는다.
+ * 위 진단으로 inSync=false를 확인한 뒤에만 쓴다.
+ */
+router.post('/auctions/:id/price/resync', async (req, res) => {
+  const { id } = req.params;
+
+  const auction = await getAuctionById(id, { includeHidden: true });
+  if (!auction) return res.status(404).json({ error: '존재하지 않는 경매입니다' });
+
+  const history = await getBidsForAuction(id);
+  // 기록으로 증명되는 값만 기준으로 삼는다. 입찰이 없으면 시작가로 되돌아간다.
+  const truth = history.length
+    ? Math.max(auction.currentPrice, ...history.map((b) => b.price))
+    : auction.currentPrice;
+
+  const before = await getBidPrice(id).catch(() => null);
+  await resyncAuctionPrice(id, truth);
+
+  console.warn(`[admin] 현재가 재동기화 ${id}: valkey ${before} → ${truth}`);
+  res.json({ id, before, after: truth });
 });
 
 // 인기 상품 통계 — worker(batch)가 주기적으로(POLL_INTERVAL_SECONDS) 미리 구워둔 스냅샷을
