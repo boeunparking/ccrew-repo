@@ -359,14 +359,14 @@ resource "aws_s3_bucket_policy" "uploads" {
 # apex 레코드를 지우면 "리다이렉트"가 아니라 "연결 실패"가 된다.
 ########################################
 
-# 이름만 바꾼 것이지 새 레코드가 아니다. moved가 없으면 terraform이
-# "frontend 삭제 + frontend_apex 생성"으로 계획해서, 그 사이 apex가 잠깐 조회 실패한다.
-moved {
-  from = aws_route53_record.frontend
-  to   = aws_route53_record.frontend_apex
-}
-
-resource "aws_route53_record" "frontend_apex" {
+# apex 레코드다. 이름이 frontend_www 와 짝이 맞게 "frontend_apex" 가 아닌 이유:
+#
+# 이미 state 에 이 주소(aws_route53_record.frontend)로 들어 있어서, 이름을 바꾸면
+# moved 블록이 필요해진다. 그런데 moved 가 있으면 deploy.yml 의 ecr 잡처럼
+# -target 으로 일부만 apply 하는 경로가 통째로 막힌다 —
+# "Moved resource instances excluded by targeting" 으로 거부당한다.
+# 이름 대칭성은 그 대가를 치를 만한 값이 아니다.
+resource "aws_route53_record" "frontend" {
   zone_id = data.aws_route53_zone.cloudduck.zone_id
   name    = var.domain_name
   type    = "A"
