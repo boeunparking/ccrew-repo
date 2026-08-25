@@ -1,6 +1,10 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { useCurrentUser, refreshCurrentUser } from "../lib/useCurrentUser.js";
+import {
+  useUnreadNotifications,
+  refreshUnreadNotifications,
+} from "../lib/useUnreadNotifications.js";
 
 const categories = [
   { label: "전체", path: "/auctions" },
@@ -15,19 +19,29 @@ export default function Nav({ showCreate = false, showCategories = true }) {
   const location = useLocation();
   const navigate = useNavigate();
   const user = useCurrentUser();
+  const unread = useUnreadNotifications();
   const current = location.pathname + location.search;
 
   function handleLogout() {
     api.logout();
     // 토큰만 지우면 Nav는 캐시된 사용자를 계속 보여준다. 캐시까지 비워야 즉시 반영된다.
     refreshCurrentUser();
+    // 알림 뱃지도 같이 비운다 — 안 그러면 로그아웃 후에도 남의 개수가 떠 있다.
+    refreshUnreadNotifications();
     navigate("/");
   }
 
   return (
     <>
       <div className="util-bar">
-        <Link to="/mypage">마이페이지</Link>
+        <Link to="/mypage">
+          마이페이지
+          {user && unread > 0 && (
+            <span className="notif-badge" aria-label={`읽지 않은 알림 ${unread}건`}>
+              {unread > 99 ? "99+" : unread}
+            </span>
+          )}
+        </Link>
         {user ? (
           <>
             <span className="util-user">{user.nickname}</span>

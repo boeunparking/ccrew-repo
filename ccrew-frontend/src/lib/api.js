@@ -101,7 +101,11 @@ export const api = {
   // --- 마이페이지 ---
   mySales: () => request('/me/sales', { auth: true }),
   myPurchases: () => request('/me/purchases', { auth: true }),
+  // { items, unread } — 뱃지가 쓰는 안 읽은 개수도 같이 온다
   myNotifications: () => request('/me/notifications', { auth: true }),
+  // 알림 탭을 열었을 때 호출한다. 안 읽은 알림을 전부 읽음으로 표시한다.
+  readNotifications: () =>
+    request('/me/notifications/read', { method: 'PATCH', auth: true }),
 
   // --- 관리자 ---
   adminStats: () => request('/admin/stats', { auth: true }),

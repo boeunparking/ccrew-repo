@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import Nav from '../components/Nav.jsx'
 import { api } from '../lib/api.js'
+import { refreshUnreadNotifications } from '../lib/useUnreadNotifications.js'
 
 const tabs = ['판매', '구매', '알림']
 
@@ -23,7 +24,17 @@ export default function MyPage() {
       .then((d) => {
         if (active === '판매') setSellItems(d.items)
         else if (active === '구매') setBuyItems(d.items)
-        else setNotifications(d.items)
+        else {
+          setNotifications(d.items)
+          // 탭을 연 시점에 읽음 처리한다. 목록은 읽음 처리 "전"의 상태를 들고 있으므로
+          // 이번에 새로 확인한 알림이 화면에서는 계속 강조된 채로 남는다.
+          if (d.unread > 0) {
+            api.readNotifications()
+              .then(refreshUnreadNotifications)
+              // 읽음 처리 실패는 다음에 탭을 열면 다시 시도된다. 화면을 막을 이유가 없다.
+              .catch(() => {})
+          }
+        }
       })
       .catch((e) => setError(e.message))
   }, [active])
@@ -82,8 +93,17 @@ export default function MyPage() {
       {!error && active === '알림' && (
         <div style={{ padding: '24px' }}>
           {notifications.map((n) => (
-            <div className="listrow" key={n.id}>
-              <span>{n.message}</span>
+            <div
+              className="listrow"
+              key={n.id}
+              // 방금 읽음 처리했더라도, 이번에 새로 확인한 알림은 이 화면에 머무는 동안
+              // 계속 구분돼 보여야 어떤 게 새 소식이었는지 알 수 있다.
+              style={n.read ? undefined : { background: '#FFFBEA' }}
+            >
+              <span style={{ fontWeight: n.read ? 400 : 700 }}>
+                {n.type === 'WON' && '🎉 '}
+                {n.message}
+              </span>
               <span style={{ color: '#B5B5B5' }}>{new Date(n.createdAt).toLocaleString('ko-KR')}</span>
             </div>
           ))}

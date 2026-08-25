@@ -4,15 +4,14 @@
 // 지금은 전부 pool.query로 바뀌었고, 그래서 아래 함수들은 전부 async다 —
 // 호출하는 라우터 쪽에서 반드시 await를 붙여야 한다.
 //
-// claims/securityLogs/suspiciousBids/notifications는 아직 스키마(src/schema.sql)에
-// 대응하는 테이블이 없어서 그대로 정적 목업으로 남겨뒀다 (관리자 대시보드 시연용).
+// claims/securityLogs/suspiciousBids는 아직 스키마(src/schema.sql)에 대응하는
+// 테이블이 없어서 그대로 정적 목업으로 남겨뒀다 (관리자 대시보드 시연용).
 // 실제 데이터로 바꾸려면 별도 테이블 설계가 먼저 필요하다.
+// (notifications는 목업이었지만 이제 실제 테이블이다 — 아래 notifications 섹션.)
 
 import crypto from 'crypto';
 import pool from './db.js';
 import { ASSET_BASE_URL } from './config.js';
-
-const afterSec = (s) => new Date(Date.now() + s * 1000).toISOString();
 
 export const claims = [
   { id: 'c1', name: '상품 미배송 신고', user: 'user_a15', status: '대기' },
@@ -31,10 +30,8 @@ export const suspiciousBids = [
   { t: '12:35:47', msg: 'user_h91 → 90초 내 7회 연속 입찰 (모니터링 대상 등록)' },
 ];
 
-export const notifications = [
-  { id: 'n1', message: '명일방주 텍사스 스케일 피규어 — 새로운 입찰이 등록되었습니다', createdAt: afterSec(-300) },
-  { id: 'n2', message: '원피스 루피 기어5 스케일 피규어 — 낙찰되었습니다', createdAt: afterSec(-3600) },
-];
+// notifications 는 더 이상 여기 없다 — 실제 테이블(schema.sql)로 옮겼다.
+// 조회/읽음 처리는 아래 "notifications" 섹션의 함수들을 쓴다.
 
 // ========================================
 // 순수 함수 — DB와 무관, 예전과 동일
@@ -310,6 +307,52 @@ export async function recordBid(bid) {
   }
 }
 
+// ========================================
+// notifications
+// ========================================
+// 만드는 쪽은 batch 워커다(경매 마감 시 낙찰/패찰 한 건씩). web 은 읽기와 읽음 처리만 한다.
+
+const NOTIFICATION_LIMIT = 50;
+
+export async function listNotifications(userId) {
+  const [rows] = await pool.query(
+    `SELECT id, auction_id, type, message, read_at, created_at
+     FROM notifications
+     WHERE user_id = ?
+     ORDER BY created_at DESC
+     LIMIT ${NOTIFICATION_LIMIT}`,
+    [userId],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    auctionId: r.auction_id,
+    type: r.type,
+    message: r.message,
+    read: r.read_at !== null,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function countUnreadNotifications(userId) {
+  const [rows] = await pool.query(
+    'SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND read_at IS NULL',
+    [userId],
+  );
+  return rows[0].count;
+}
+
+/**
+ * 안 읽은 알림을 전부 읽음으로 표시한다 (알림 탭을 열었을 때).
+ * read_at IS NULL 조건을 두는 이유: 이미 읽은 알림의 시각을 열 때마다 덮어쓰지 않는다.
+ */
+export async function markNotificationsRead(userId) {
+  const [result] = await pool.query(
+    'UPDATE notifications SET read_at = NOW() WHERE user_id = ? AND read_at IS NULL',
+    [userId],
+  );
+  return result.affectedRows;
+}
+
 /**
  * 경매를 관련 데이터까지 통째로 지운다 (관리자 전용).
  *
@@ -333,6 +376,9 @@ export async function deleteAuction(id) {
 
     await conn.query('DELETE FROM bids WHERE auction_id = ?', [id]);
     await conn.query('DELETE FROM auction_images WHERE auction_id = ?', [id]);
+    // notifications 는 auction_id 에 FK 가 없어서 삭제를 막지는 않지만,
+    // 남겨두면 이미 사라진 경매를 가리키는 알림이 계속 보인다.
+    await conn.query('DELETE FROM notifications WHERE auction_id = ?', [id]);
     const [result] = await conn.query('DELETE FROM auctions WHERE id = ?', [id]);
 
     await conn.commit();

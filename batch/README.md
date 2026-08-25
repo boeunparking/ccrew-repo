@@ -6,8 +6,11 @@ CloudDuck 백그라운드 워커. HTTP 서버가 아니라 `worker.js`가 상시
 
 ## 하는 일
 
-1. **낙찰 알림** — `POLL_INTERVAL_SECONDS`마다 Valkey의 `auctions:open` 소트셋에서 마감시간이
-   지난 경매를 찾아, 그 경매의 최고 입찰자(`auction:{id}:leader` 해시)에게 SES로 낙찰 메일을 보낸다.
+1. **낙찰/패찰 처리** — `POLL_INTERVAL_SECONDS`마다 Valkey의 `auctions:open` 소트셋에서 마감시간이
+   지난 경매를 찾아, RDS `bids`에서 최고 입찰자를 뽑고 → `notifications` 테이블에 낙찰(`WON`) 1건과
+   패찰(`LOST`) n건을 남긴 뒤 → 낙찰자에게 SES로 메일을 보낸다.
+   누가 낙찰인지는 Valkey가 아니라 RDS 기록이 기준이다. Valkey는 캐시라 키가 사라질 수 있는데,
+   예전엔 그 경우 낙찰자를 잃고 경매가 조용히 유찰 처리됐다.
 2. **인기 상품 통계** — 같은 주기로 `auction:popularity` 소트셋(입찰마다 web이 `ZINCRBY`)에서
    상위 10개를 뽑아 `stats:popular:snapshot` 키에 JSON으로 캐싱한다.
    `GET /admin/stats/popular`(web의 admin 라우터)이 이 값을 그대로 읽어서 응답한다.
@@ -25,8 +28,10 @@ CloudDuck 백그라운드 워커. HTTP 서버가 아니라 `worker.js`가 상시
 | --- | --- | --- |
 | `auctions:open` | ZSET (auctionId → endsAt ms) | `auctionRoutes.js` POST `/auctions` |
 | `auction:{id}:meta` | HASH (name) | `auctionRoutes.js` POST `/auctions` |
-| `auction:{id}:leader` | HASH (userId, nickname, email, price) | `bidRoutes.js` 입찰 성공 시 |
 | `auction:popularity` | ZSET (auctionId → 입찰 횟수) | `bidRoutes.js` 입찰 성공 시 |
+
+RDS도 본다 — `auctions.hidden_at`(반려 확인), `bids`(낙찰/패찰 판정), `notifications`(알림 기록).
+`auction:{id}:leader` 해시는 더 이상 쓰지 않는다(위 1번 참고).
 
 ## 환경변수
 

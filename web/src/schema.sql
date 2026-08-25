@@ -90,3 +90,31 @@ CREATE TABLE IF NOT EXISTS bids (
   FOREIGN KEY (auction_id) REFERENCES auctions(id),
   FOREIGN KEY (user_id)    REFERENCES users(id)
 );
+
+-- ========================================
+-- notifications: 사용자별 알림 (routes/meRoutes.js 알림 탭)
+-- ========================================
+-- 경매가 마감되면 batch 워커가 낙찰자에게 WON, 나머지 입찰자에게 LOST 를 한 건씩 넣는다.
+-- (batch/src/jobs.js — 이메일 발송과 같은 자리에서 만든다)
+--
+-- auction_id 에 FK 를 걸지 않는 이유: 관리자가 경매를 삭제할 때(store.js deleteAuction)
+-- FK 가 있으면 삭제가 거부된다. 알림은 "그때 이런 일이 있었다"는 기록이라 원본 경매가
+-- 사라져도 남아 있는 편이 맞다. 대신 deleteAuction 이 같이 정리한다.
+CREATE TABLE IF NOT EXISTS notifications (
+  id          CHAR(36)     PRIMARY KEY,
+  user_id     CHAR(36)     NOT NULL,
+  auction_id  CHAR(36)     NULL,
+  type        VARCHAR(20)  NOT NULL,      -- 'WON' | 'LOST'
+  message     VARCHAR(255) NOT NULL,
+  read_at     DATETIME     NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  -- 알림 탭은 "내 알림을 최신순으로"만 조회한다
+  KEY idx_notifications_user (user_id, created_at),
+
+  -- 워커는 30초마다 돌고 재시도도 한다. 같은 경매·같은 종류의 알림이 그때마다
+  -- 쌓이지 않도록 DB 레벨에서 막는다 (INSERT IGNORE 와 짝).
+  UNIQUE KEY uk_notifications_dedupe (user_id, auction_id, type),
+
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);

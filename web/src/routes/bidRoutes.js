@@ -92,17 +92,14 @@ router.post('/auctions/:id/bids', requireAuth, async (req, res) => {
       return res.status(500).json({ error: '입찰을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요' });
     }
 
-    // 낙찰 알림/인기 상품 통계 워커(batch)가 쓸 상태 갱신.
+    // 인기 상품 통계 워커(batch)가 쓸 입찰 횟수.
     // 여기서 실패해도 입찰 자체는 이미 성공했으니 응답을 막지 않는다.
-    await Promise.all([
-      redis.hset(`auction:${auctionId}:leader`,
-        'userId', bid.userId,
-        'nickname', bid.nickname,
-        'email', req.user.email,
-        'price', String(bid.price),
-      ),
-      redis.zincrby('auction:popularity', 1, auctionId),
-    ]).catch((e) => console.error('[bid] 워커용 상태 갱신 실패:', e.message));
+    //
+    // auction:{id}:leader 해시는 더 이상 쓰지 않는다 — 워커가 낙찰자를 RDS의 bids
+    // 에서 직접 뽑기 때문이다(batch/src/db.js getAuctionOutcome). 캐시가 사라져도
+    // 낙찰자를 잃지 않는다.
+    await redis.zincrby('auction:popularity', 1, auctionId)
+      .catch((e) => console.error('[bid] 인기 통계 갱신 실패:', e.message));
 
     // 같은 경매를 보고 있는 모든 브라우저에 밀어준다
     broadcast(auctionId, {

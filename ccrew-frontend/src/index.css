@@ -83,6 +83,24 @@ a {
 .util-bar .util-link:hover {
   color: var(--black);
 }
+/* 안 읽은 알림 개수. 마이페이지 링크 옆에 붙는다.
+   util-bar 글자가 10.5px로 작아서, 뱃지는 원형을 유지하도록 min-width로 잡는다
+   (한 자리는 원, 두 자리 이상은 알약 모양이 된다). */
+.util-bar .notif-badge {
+  display: inline-block;
+  min-width: 15px;
+  margin-left: 4px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: #c0392b;
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+  letter-spacing: 0;
+  vertical-align: 1px;
+}
 
 .topbar {
   display: flex;

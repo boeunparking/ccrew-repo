@@ -1,5 +1,8 @@
 import { Router } from 'express';
-import { listAuctions, getBidsForAuction, notifications, secondsLeft, isEnded } from '../store.js';
+import {
+  listAuctions, getBidsForAuction, secondsLeft, isEnded,
+  listNotifications, countUnreadNotifications, markNotificationsRead,
+} from '../store.js';
 import { requireAuth } from '../authMiddleware.js';
 
 const router = Router();
@@ -60,9 +63,22 @@ router.get('/purchases', requireAuth, async (req, res) => {
   res.json({ items });
 });
 
-// MyPage.jsx — 알림 탭
-router.get('/notifications', requireAuth, (_req, res) => {
-  res.json({ items: notifications });
+// MyPage.jsx — 알림 탭 / Nav.jsx — 안 읽은 알림 뱃지
+//
+// unread 를 목록과 같이 내려서 뱃지가 따로 요청하지 않아도 되게 한다.
+// 알림은 1인당 최대 50건만 조회하므로 한 번에 받아도 부담이 없다.
+router.get('/notifications', requireAuth, async (req, res) => {
+  const [items, unread] = await Promise.all([
+    listNotifications(req.user.sub),
+    countUnreadNotifications(req.user.sub),
+  ]);
+  res.json({ items, unread });
+});
+
+// 알림 탭을 열면 호출한다 — 안 읽은 알림을 전부 읽음으로 표시한다.
+router.patch('/notifications/read', requireAuth, async (req, res) => {
+  const updated = await markNotificationsRead(req.user.sub);
+  res.json({ updated, unread: 0 });
 });
 
 export default router;
